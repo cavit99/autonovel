@@ -1,5 +1,6 @@
 import unittest
 from contextlib import redirect_stderr
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -15,6 +16,145 @@ import review
 
 
 class EvidenceEvalTests(unittest.TestCase):
+    def test_load_foundation_layer_files_reads_structural_artifacts(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
+            (planning / "voice.md").write_text("Voice marker\n", encoding="utf-8")
+            (planning / "world.md").write_text("World marker\n", encoding="utf-8")
+            (planning / "characters.md").write_text("Characters marker\n", encoding="utf-8")
+            (planning / "perspective.md").write_text("Perspective marker\n", encoding="utf-8")
+            (planning / "canon.md").write_text("Canon marker\n", encoding="utf-8")
+            (planning / "arc_outline.md").write_text("Arc marker\n", encoding="utf-8")
+            (planning / "chapter_cards.md").write_text("Cards marker\n", encoding="utf-8")
+            (planning / "outline.md").write_text("Outline marker\n", encoding="utf-8")
+            (planning / "thread_registry.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "consent",
+                            "description": "The bell asks for consent",
+                            "type": "plot",
+                            "first_seen": 1,
+                            "reinforced": [2],
+                            "payoff": 5,
+                            "required": True,
+                        }
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with patch.object(evaluate, "BASE_DIR", root):
+                layers = evaluate.load_foundation_layer_files()
+
+        self.assertEqual(layers["perspective"], "Perspective marker\n")
+        self.assertEqual(layers["arc_outline"], "Arc marker\n")
+        self.assertEqual(layers["chapter_cards"], "Cards marker\n")
+        self.assertEqual(layers["outline"], "Outline marker\n")
+        self.assertIn("entries: 1", layers["thread_registry_window"])
+        self.assertIn("id=consent", layers["thread_registry_window"])
+
+    def test_build_foundation_prompt_includes_structural_planning_layer(self):
+        prompt = evaluate.build_foundation_prompt(
+            {
+                "perspective": "Perspective marker",
+                "voice": "Voice marker",
+                "world": "World marker",
+                "characters": "Characters marker",
+                "canon": "Canon marker",
+                "arc_outline": "Arc marker",
+                "chapter_cards": "Cards marker",
+                "thread_registry": json.dumps(
+                    [
+                        {
+                            "id": "consent",
+                            "description": "The bell asks for consent",
+                            "type": "plot",
+                            "first_seen": 1,
+                            "payoff": 3,
+                        }
+                    ]
+                ),
+                "outline": "Outline marker",
+            }
+        )
+
+        self.assertIn("CURRENT STRUCTURAL PLANNING LAYER UNDER REVIEW", prompt)
+        self.assertIn("GOVERNING PERSPECTIVE:\nPerspective marker", prompt)
+        self.assertIn("ARC OUTLINE:\nArc marker", prompt)
+        self.assertIn("CHAPTER CARDS:\nCards marker", prompt)
+        self.assertIn("THREAD REGISTRY WINDOW (rendered from thread_registry.json):", prompt)
+        self.assertIn("id=consent", prompt)
+        self.assertIn("LEGACY OUTLINE REBUILD / EXPORT VIEW:\nOutline marker", prompt)
+        self.assertIn("not just the legacy outline", prompt)
+
+    def test_evaluate_foundation_uses_structural_payload_and_backfills_lore_score(self):
+        layers = {
+            "perspective": "Perspective marker",
+            "voice": "Voice marker",
+            "world": "World marker",
+            "characters": "Characters marker",
+            "canon": "Canon marker",
+            "arc_outline": "Arc marker",
+            "chapter_cards": "Cards marker",
+            "thread_registry": json.dumps(
+                [
+                    {
+                        "id": "consent",
+                        "description": "The bell asks for consent",
+                        "type": "plot",
+                        "first_seen": 1,
+                        "payoff": 3,
+                    }
+                ]
+            ),
+            "outline": "Outline marker",
+        }
+        judge_response = json.dumps(
+            {
+                "perspective_alignment": {"score": 8, "gap": "g", "fix": "f", "note": "n"},
+                "arc_coherence": {"score": 7, "gap": "g", "fix": "f", "note": "n"},
+                "chapter_card_specificity": {"score": 6, "gap": "g", "fix": "f", "note": "n"},
+                "thread_payoff_design": {"score": 9, "gap": "g", "fix": "f", "note": "n"},
+                "outline_synthesis": {"score": 8, "gap": "g", "fix": "f", "note": "n"},
+                "world_support": {"score": 7, "gap": "g", "fix": "f", "note": "n"},
+                "character_support": {"score": 8, "gap": "g", "fix": "f", "note": "n"},
+                "canon_readiness": {"score": 9, "gap": "g", "fix": "f", "note": "n"},
+                "voice_guardrails": {"score": 6, "gap": "g", "fix": "f", "note": "n"},
+                "internal_consistency": {"score": 7, "gap": "g", "fix": "f", "note": "n"},
+                "overall_score": 7.4,
+            }
+        )
+
+        with (
+            patch.object(evaluate, "load_foundation_layer_files", return_value=layers),
+            patch.object(evaluate, "call_judge", return_value=judge_response) as mock_call,
+        ):
+            result = evaluate.evaluate_foundation()
+
+        prompt = mock_call.call_args.args[0]
+        self.assertIn("Perspective marker", prompt)
+        self.assertIn("Arc marker", prompt)
+        self.assertIn("Cards marker", prompt)
+        self.assertIn("id=consent", prompt)
+        self.assertIn("Outline marker", prompt)
+        self.assertEqual(mock_call.call_args.kwargs["max_tokens"], 16000)
+        self.assertEqual(result["structure_score"], 7.6)
+        self.assertEqual(result["lore_score"], 8.0)
+        self.assertEqual(
+            result["structural_artifacts_used"],
+            [
+                "planning/perspective.md",
+                "planning/arc_outline.md",
+                "planning/chapter_cards.md",
+                "planning/thread_registry.json",
+                "planning/outline.md",
+            ],
+        )
+
     def test_build_evidence_pack_collects_expected_categories(self):
         chapters = {
             1: '# Chapter 1\n\n"Leave it," Cass said.\n\nHe waited in the corridor and listened to the bell.\n\nThe history of the ward had always mattered because the contract still held.\n',
