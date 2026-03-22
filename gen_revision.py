@@ -28,6 +28,7 @@ from revision_patching import (
     write_patch_file,
 )
 from roughness_guard import build_guard_report
+from project_paths import readable_planning_artifact_path
 
 load_dotenv(BASE_DIR / ".env")
 
@@ -68,9 +69,9 @@ def call_writer(prompt: str, max_tokens: int = 16000) -> str:
 
 
 def load_full_revision_context(ch_num: int, brief_file: str) -> dict[str, str | Path]:
-    voice = (BASE_DIR / "voice.md").read_text(encoding="utf-8")
-    characters = (BASE_DIR / "characters.md").read_text(encoding="utf-8")
-    world = (BASE_DIR / "world.md").read_text(encoding="utf-8")
+    voice = readable_planning_artifact_path("voice", BASE_DIR).read_text(encoding="utf-8")
+    characters = readable_planning_artifact_path("characters", BASE_DIR).read_text(encoding="utf-8")
+    world = readable_planning_artifact_path("world", BASE_DIR).read_text(encoding="utf-8")
     brief = Path(brief_file).read_text(encoding="utf-8")
 
     prev_path = chapter_path(ch_num - 1)

@@ -15,6 +15,12 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
         return False
 
 from foundation_mind import extract_json_object, render_perspective_markdown
+from project_paths import (
+    ensure_parent_dir,
+    planning_artifact_path,
+    readable_planning_artifact_path,
+    require_seed_path,
+)
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -22,7 +28,7 @@ load_dotenv(BASE_DIR / ".env")
 WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
-DEFAULT_OUTPUT = BASE_DIR / "perspective.md"
+DEFAULT_OUTPUT = planning_artifact_path("perspective", BASE_DIR)
 
 SYSTEM_PROMPT = (
     "You design the governing perspective for novels. You think in terms of "
@@ -97,14 +103,15 @@ def main() -> None:
         print("ERROR: ANTHROPIC_API_KEY not set in .env", file=sys.stderr)
         sys.exit(1)
 
-    seed = read_required(BASE_DIR / "seed.txt")
-    world = read_required(BASE_DIR / "world.md")
-    characters = read_required(BASE_DIR / "characters.md")
+    seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
+    world = read_required(readable_planning_artifact_path("world", BASE_DIR))
+    characters = read_required(readable_planning_artifact_path("characters", BASE_DIR))
 
     print("Calling writer model...", file=sys.stderr)
     raw = call_writer(build_prompt(seed, world, characters))
     data = extract_json_object(raw)
     markdown = render_perspective_markdown(data)
+    ensure_parent_dir(args.output)
     args.output.write_text(markdown + "\n")
     print(f"Saved perspective to {args.output}", file=sys.stderr)
     print(markdown)

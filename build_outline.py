@@ -7,13 +7,14 @@ import argparse
 from pathlib import Path
 
 from export_rebuild import BASE_DIR, render_outline_text
+from project_paths import ensure_parent_dir, planning_artifact_path
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Rebuild outline.md as a compatibility/export artifact from accepted chapters, "
-            "arc_outline.md, chapter_cards.md, thread_registry.json, and manifest.json."
+            "Rebuild planning/outline.md as a compatibility/export artifact from accepted chapters, "
+            "planning/arc_outline.md, planning/chapter_cards.md, planning/thread_registry.json, and manifest.json."
         )
     )
     parser.add_argument(
@@ -26,11 +27,12 @@ def main() -> None:
         "--output",
         type=Path,
         default=None,
-        help="Where to write the rebuilt outline (defaults to <base-dir>/outline.md).",
+        help="Where to write the rebuilt outline (defaults to <base-dir>/planning/outline.md).",
     )
     args = parser.parse_args()
 
-    output_path = args.output or (args.base_dir / "outline.md")
+    output_path = args.output or planning_artifact_path("outline", args.base_dir)
+    ensure_parent_dir(output_path)
     output_path.write_text(render_outline_text(args.base_dir) + "\n", encoding="utf-8")
     print(output_path)
 

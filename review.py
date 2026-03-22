@@ -24,6 +24,8 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
     def load_dotenv(*_args, **_kwargs):
         return False
 
+from project_paths import readable_planning_artifact_path
+
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env", override=True)
 
@@ -73,7 +75,7 @@ def call_opus(prompt, max_tokens=8000):
 
 def get_title():
     """Extract novel title from first chapter or outline."""
-    outline = BASE_DIR / "outline.md"
+    outline = readable_planning_artifact_path("outline", BASE_DIR)
     if outline.exists():
         first_line = outline.read_text().split("\n")[0]
         title = first_line.lstrip("# ").strip()

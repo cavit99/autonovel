@@ -10,6 +10,7 @@ from pathlib import Path
 
 from manifest_tools import derive_title
 from planning_split import extract_json_object, normalize_thread_registry, parse_chapter_cards
+from project_paths import readable_planning_artifact_path
 
 SCENE_OPTION_FIELDS = (
     "goal",
@@ -327,12 +328,12 @@ def chapter_card_for(cards: list[dict[str, object]], chapter_num: int) -> dict[s
 
 
 def load_chapter_card(base_dir: Path, chapter_num: int) -> dict[str, object]:
-    cards = parse_chapter_cards(read_text_if_exists(base_dir / "chapter_cards.md"))
+    cards = parse_chapter_cards(read_text_if_exists(readable_planning_artifact_path("chapter_cards", base_dir)))
     return chapter_card_for(cards, chapter_num)
 
 
 def load_thread_registry(base_dir: Path) -> list[dict[str, object]]:
-    payload = read_json_if_exists(base_dir / "thread_registry.json", [])
+    payload = read_json_if_exists(readable_planning_artifact_path("thread_registry", base_dir), [])
     return normalize_thread_registry(payload)
 
 
@@ -1162,13 +1163,13 @@ def scene_options_path(base_dir: Path, chapter_num: int) -> Path:
 
 def detect_new_planning_mode(base_dir: Path, chapter_num: int) -> bool:
     required = [
-        base_dir / "perspective.md",
-        base_dir / "voice.md",
-        base_dir / "character_engine.json",
-        base_dir / "chapter_cards.md",
-        base_dir / "thread_registry.json",
-        base_dir / "world.md",
-        base_dir / "canon.md",
+        readable_planning_artifact_path("perspective", base_dir),
+        readable_planning_artifact_path("voice", base_dir),
+        readable_planning_artifact_path("character_engine", base_dir),
+        readable_planning_artifact_path("chapter_cards", base_dir),
+        readable_planning_artifact_path("thread_registry", base_dir),
+        readable_planning_artifact_path("world", base_dir),
+        readable_planning_artifact_path("canon", base_dir),
         scene_options_path(base_dir, chapter_num),
     ]
     if chapter_num > 1:
@@ -1201,7 +1202,7 @@ def previous_chapter_tail(base_dir: Path, chapter_num: int) -> str:
 
 
 def load_character_engine(base_dir: Path) -> dict[str, object]:
-    payload = read_json_if_exists(base_dir / "character_engine.json", {})
+    payload = read_json_if_exists(readable_planning_artifact_path("character_engine", base_dir), {})
     return payload if isinstance(payload, dict) else {}
 
 
@@ -1211,10 +1212,10 @@ def project_reference(base_dir: Path) -> str:
 
 
 def build_legacy_prompt(base_dir: Path, chapter_num: int) -> str:
-    voice = read_text_if_exists(base_dir / "voice.md")
-    world = read_text_if_exists(base_dir / "world.md")
-    characters = read_text_if_exists(base_dir / "characters.md")
-    outline = read_text_if_exists(base_dir / "outline.md")
+    voice = read_text_if_exists(readable_planning_artifact_path("voice", base_dir))
+    world = read_text_if_exists(readable_planning_artifact_path("world", base_dir))
+    characters = read_text_if_exists(readable_planning_artifact_path("characters", base_dir))
+    outline = read_text_if_exists(readable_planning_artifact_path("outline", base_dir))
 
     chapter_outline = extract_chapter_outline(outline, chapter_num)
     next_chapter = extract_next_chapter_outline(outline, chapter_num)
@@ -1291,12 +1292,12 @@ Write the chapter now. Full text, beginning to end.
 
 
 def build_new_mode_prompt(base_dir: Path, chapter_num: int) -> str:
-    perspective_text = read_text_if_exists(base_dir / "perspective.md")
+    perspective_text = read_text_if_exists(readable_planning_artifact_path("perspective", base_dir))
     perspective = parse_perspective_markdown(perspective_text)
-    voice = read_text_if_exists(base_dir / "voice.md")
-    world = read_text_if_exists(base_dir / "world.md")
-    canon = read_text_if_exists(base_dir / "canon.md")
-    character_engine = read_text_if_exists(base_dir / "character_engine.json")
+    voice = read_text_if_exists(readable_planning_artifact_path("voice", base_dir))
+    world = read_text_if_exists(readable_planning_artifact_path("world", base_dir))
+    canon = read_text_if_exists(readable_planning_artifact_path("canon", base_dir))
+    character_engine = read_text_if_exists(readable_planning_artifact_path("character_engine", base_dir))
     chapter_card = load_chapter_card(base_dir, chapter_num)
     scene_options = read_json_if_exists(scene_options_path(base_dir, chapter_num), [])
     prior_state = read_json_if_exists(story_state_path(base_dir, chapter_num - 1), {}) if chapter_num > 1 else {}

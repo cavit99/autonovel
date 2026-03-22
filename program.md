@@ -9,45 +9,45 @@ alignment.
 
 Before writing or evaluating anything, read:
 
-- `voice.md`
+- `planning/voice.md`
 - `CRAFT.md`
 - `ANTI-SLOP.md`
-- `perspective.md` when it exists
-- `chapter_cards.md`
-- `thread_registry.json`
+- `planning/perspective.md` when it exists
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
 - the accepted chapter files relevant to the change
 
 ## Current Artifact Stack
 
 ```text
 Layer 8: manifest.json            -- runtime snapshot, counts, hashes, risk chapters
-Layer 7: voice.md                 -- style guardrails plus discovered voice
-Layer 6: perspective.md           -- governing consciousness
-Layer 5: world.md                 -- world, history, institutions, rules
-Layer 4: characters.md            -- human-readable character registry
-Layer 4b: character_engine.json   -- structured contradictions and ceilings
-Layer 3: arc_outline.md           -- irreversible turns, reveals, pressure, risks
-Layer 2: chapter_cards.md         -- chapter-by-chapter structural cards
-Layer 2b: thread_registry.json    -- plot / pressure / echo / texture
+Layer 7: planning/voice.md        -- style guardrails plus discovered voice
+Layer 6: planning/perspective.md  -- governing consciousness
+Layer 5: planning/world.md        -- world, history, institutions, rules
+Layer 4: planning/characters.md   -- human-readable character registry
+Layer 4b: planning/character_engine.json -- structured contradictions and ceilings
+Layer 3: planning/arc_outline.md  -- irreversible turns, reveals, pressure, risks
+Layer 2: planning/chapter_cards.md -- chapter-by-chapter structural cards
+Layer 2b: planning/thread_registry.json -- plot / pressure / echo / texture
 Layer 1b: scene_options/ch_XX.json -- scene choices for a chapter
 Layer 1a: state/story_state/*.json -- evolving accepted-story state
 Layer 1: chapters/ch_XX.md        -- accepted prose
-Cross-cutting: canon.md           -- hard facts
-Compatibility: outline.md         -- legacy/export outline
+Cross-cutting: planning/canon.md  -- hard facts
+Compatibility: planning/outline.md -- legacy/export outline
 Compatibility: arc_summary.md     -- legacy/export arc summary
 ```
 
 Source of truth:
 
 - accepted chapters
-- `arc_outline.md`
-- `chapter_cards.md`
-- `thread_registry.json`
+- `planning/arc_outline.md`
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
 - `manifest.json`
 
 Compatibility artifacts:
 
-- `outline.md`
+- `planning/outline.md`
 - `arc_summary.md`
 
 ## Automated Pipeline Truth
@@ -68,15 +68,15 @@ evidence-backed revision, and a separate review phase.
 
 When building manually, the current sequence is:
 
-1. `gen_world.py > world.md`
-2. `gen_characters.py --emit-engine > characters.md`
+1. `gen_world.py > planning/world.md`
+2. `gen_characters.py --emit-engine > planning/characters.md`
 3. `gen_perspective.py`
 4. `discover_voice.py --trials 8`
 5. `gen_arc.py`
 6. `gen_chapter_cards.py`
 7. `gen_thread_registry.py`
 8. `gen_outline_part2.py`
-9. `gen_canon.py > canon.md`
+9. `gen_canon.py > planning/canon.md`
 10. `build_manifest.py --phase foundation`
 11. `consistency_gate.py --phase foundation`
 
@@ -85,7 +85,7 @@ Important:
 - `discover_voice.py` is the voice discovery mechanism
 - `voice_fingerprint.py` is telemetry, not the source of voice
 - `gen_outline.py` and `gen_outline_part2.py` are compatibility wrappers
-- `outline.md` is not the planning source of truth
+- `planning/outline.md` is not the planning source of truth
 
 ## Drafting Rules
 
@@ -110,26 +110,26 @@ For chapter `N`:
 
 `draft_chapter.py --mode new` requires:
 
-- `perspective.md`
-- `voice.md`
-- `character_engine.json`
-- `chapter_cards.md`
-- `thread_registry.json`
-- `world.md`
-- `canon.md`
+- `planning/perspective.md`
+- `planning/voice.md`
+- `planning/character_engine.json`
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
+- `planning/world.md`
+- `planning/canon.md`
 - relevant `scene_options` and prior `story_state`
 
 New-mode context order:
 
-1. `perspective.md`
-2. `voice.md`
-3. `character_engine.json`
+1. `planning/perspective.md`
+2. `planning/voice.md`
+3. `planning/character_engine.json`
 4. `state/story_state/ch_{n-1}.json`
 5. current chapter card
 6. `scene_options/ch_XX.json`
 7. local thread window
-8. `world.md`
-9. `canon.md`
+8. `planning/world.md`
+9. `planning/canon.md`
 
 New-mode writing principles:
 
@@ -143,14 +143,14 @@ New-mode writing principles:
 
 ## Planning Rules
 
-`arc_outline.md` should contain only:
+`planning/arc_outline.md` should contain only:
 
 - irreversible turns
 - major reveals
 - pressure escalations
 - candidate risk chapters
 
-`thread_registry.json` should distinguish:
+`planning/thread_registry.json` should distinguish:
 
 - `plot`
 - `pressure`
@@ -206,16 +206,16 @@ from accepted prose plus the current planning stack and manifest metadata.
 
 When a file changes, check the downstream artifacts that depend on it:
 
-- `perspective.md` -> review `voice.md`, chapter cards, scene planning, and
+- `planning/perspective.md` -> review `planning/voice.md`, chapter cards, scene planning, and
   new-mode prompts
-- `world.md` -> review `canon.md`, chapter cards, and accepted prose
-- `characters.md` / `character_engine.json` -> review dialogue, behavior, and
-  story state
-- `arc_outline.md` -> review `chapter_cards.md`, risk chapter assumptions, and
-  manifest risk output
-- `chapter_cards.md` -> review scene options, accepted prose, variants, and
-  story-state assumptions
-- `thread_registry.json` -> review scene options, local thread windows,
+- `planning/world.md` -> review `planning/canon.md`, chapter cards, and accepted prose
+- `planning/characters.md` / `planning/character_engine.json` -> review dialogue,
+  behavior, and story state
+- `planning/arc_outline.md` -> review `planning/chapter_cards.md`, risk chapter
+  assumptions, and manifest risk output
+- `planning/chapter_cards.md` -> review scene options, accepted prose, variants,
+  and story-state assumptions
+- `planning/thread_registry.json` -> review scene options, local thread windows,
   compatibility outline output, and export summaries
 - accepted prose -> update story state, evidence pack, export summaries, and
   manifest counts as needed
@@ -233,8 +233,8 @@ Current evaluator reality:
 
 ## Rules
 
-- Prefer the planning split and accepted prose over `outline.md`.
-- Treat `outline.md` and `arc_summary.md` as compatibility outputs.
+- Prefer the planning split and accepted prose over `planning/outline.md`.
+- Treat `planning/outline.md` and `arc_summary.md` as compatibility outputs.
 - Keep canonical state deterministic in shape.
 - Keep scene planning imaginative, but normalize saved outputs.
 - Preserve legacy compatibility where it does not distort current source of

@@ -15,12 +15,14 @@ import re
 import sys
 from pathlib import Path
 
+from project_paths import readable_planning_artifact_path
+
 BASE_DIR = Path(__file__).parent
 CHAPTERS_DIR = BASE_DIR / "chapters"
 EDIT_LOGS_DIR = BASE_DIR / "edit_logs"
 EVAL_LOGS_DIR = BASE_DIR / "eval_logs"
 BRIEFS_DIR = BASE_DIR / "briefs"
-VOICE_PATH = BASE_DIR / "voice.md"
+VOICE_PATH = readable_planning_artifact_path("voice", BASE_DIR)
 
 
 # ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
 load_dotenv(BASE_DIR / ".env")
 
 from evidence_tools import load_json, render_evidence_pack
+from project_paths import readable_planning_artifact_path
 
 # Judge uses Opus 4.6 (harsh, critical). Writer uses Sonnet 4.6 (fast, long context).
 # Intentionally different to avoid self-congratulation.
@@ -263,11 +264,11 @@ def load_file(path):
 def load_layer_files():
     """Load all planning layer files."""
     return {
-        "voice": load_file(BASE_DIR / "voice.md"),
-        "world": load_file(BASE_DIR / "world.md"),
-        "characters": load_file(BASE_DIR / "characters.md"),
-        "outline": load_file(BASE_DIR / "outline.md"),
-        "canon": load_file(BASE_DIR / "canon.md"),
+        "voice": load_file(readable_planning_artifact_path("voice", BASE_DIR)),
+        "world": load_file(readable_planning_artifact_path("world", BASE_DIR)),
+        "characters": load_file(readable_planning_artifact_path("characters", BASE_DIR)),
+        "outline": load_file(readable_planning_artifact_path("outline", BASE_DIR)),
+        "canon": load_file(readable_planning_artifact_path("canon", BASE_DIR)),
     }
 
 
@@ -275,10 +276,10 @@ def load_extended_layer_files():
     layers = load_layer_files()
     layers.update(
         {
-            "perspective": load_file(BASE_DIR / "perspective.md"),
-            "character_engine": load_file(BASE_DIR / "character_engine.json"),
-            "chapter_cards": load_file(BASE_DIR / "chapter_cards.md"),
-            "thread_registry": load_file(BASE_DIR / "thread_registry.json"),
+            "perspective": load_file(readable_planning_artifact_path("perspective", BASE_DIR)),
+            "character_engine": load_file(readable_planning_artifact_path("character_engine", BASE_DIR)),
+            "chapter_cards": load_file(readable_planning_artifact_path("chapter_cards", BASE_DIR)),
+            "thread_registry": load_file(readable_planning_artifact_path("thread_registry", BASE_DIR)),
         }
     )
     return layers

@@ -245,9 +245,12 @@ goal: Get proof
         fallback_arc = {"title": "Signals", "acts": [], "major_reveals": [], "pressure_escalations": [], "candidate_risk_chapters": [4]}
         stderr = io.StringIO()
         with tempfile.TemporaryDirectory() as tmpdir:
+            seed_path = Path(tmpdir) / "seed.md"
+            seed_path.write_text("stub", encoding="utf-8")
             output_path = Path(tmpdir) / "arc_outline.md"
             with (
                 mock.patch.object(gen_arc, "API_KEY", "test-key"),
+                mock.patch.object(gen_arc, "require_seed_path", return_value=seed_path),
                 mock.patch.object(gen_arc, "read_required", return_value="stub"),
                 mock.patch.object(gen_arc, "call_writer", side_effect=RuntimeError("writer failed")),
                 mock.patch.object(gen_arc, "derive_arc", return_value=fallback_arc),
@@ -262,9 +265,12 @@ goal: Get proof
         fallback_cards = normalize_chapter_cards([{"number": 1, "title": "Signals"}])
         stderr = io.StringIO()
         with tempfile.TemporaryDirectory() as tmpdir:
+            seed_path = Path(tmpdir) / "seed.md"
+            seed_path.write_text("stub", encoding="utf-8")
             output_path = Path(tmpdir) / "chapter_cards.md"
             with (
                 mock.patch.object(gen_chapter_cards, "API_KEY", "test-key"),
+                mock.patch.object(gen_chapter_cards, "require_seed_path", return_value=seed_path),
                 mock.patch.object(gen_chapter_cards, "read_required", return_value="stub"),
                 mock.patch.object(gen_chapter_cards, "call_writer", side_effect=RuntimeError("writer failed")),
                 mock.patch.object(gen_chapter_cards, "derive_cards", return_value=fallback_cards),

@@ -22,15 +22,15 @@ after review, not during revision.
 Current execution order in `run_pipeline.py`:
 
 ```text
-gen_world.py                      -> world.md
-gen_characters.py --emit-engine   -> characters.md + character_engine.json
+gen_world.py                      -> planning/world.md
+gen_characters.py --emit-engine   -> planning/characters.md + planning/character_engine.json
 gen_perspective.py
-discover_voice.py --trials 8      -> voice.md + voice_discovery.json
-gen_arc.py                        -> arc_outline.md
-gen_chapter_cards.py              -> chapter_cards.md
-gen_thread_registry.py            -> thread_registry.json
-gen_outline_part2.py              -> outline.md (compatibility)
-gen_canon.py                      -> canon.md
+discover_voice.py --trials 8      -> planning/voice.md + planning/voice_discovery.json
+gen_arc.py                        -> planning/arc_outline.md
+gen_chapter_cards.py              -> planning/chapter_cards.md
+gen_thread_registry.py            -> planning/thread_registry.json
+gen_outline_part2.py              -> planning/outline.md (compatibility)
+gen_canon.py                      -> planning/canon.md
 build_manifest.py --phase foundation
 consistency_gate.py --phase foundation
 voice_fingerprint.py
@@ -46,7 +46,7 @@ Notes:
 - `voice_fingerprint.py` is prose telemetry, but it is still run during
   foundation in the current automated path
 - `gen_outline_part2.py` is retained as the compatibility wrapper for
-  `outline.md`
+  `planning/outline.md`
 
 ### Phase 2: Drafting
 
@@ -72,8 +72,8 @@ Important drafting rules now active:
   story state exist
 - `plan_scene.py` is writer-backed when API config is available and falls back
   to deterministic planning otherwise
-- risk chapters come from `chapter_cards.md` and `arc_outline.md`, then land in
-  `manifest.json`
+- risk chapters come from `planning/chapter_cards.md` and
+  `planning/arc_outline.md`, then land in `manifest.json`
 - critical, risky, or weak chapters may trigger a variant drafting pass
 
 Active orchestrator thresholds:
@@ -148,9 +148,9 @@ consistency_gate.py --phase export
 
 Export helper behavior:
 
-- `build_outline.py` rebuilds `outline.md` from accepted chapters plus
-  `arc_outline.md`, `chapter_cards.md`, `thread_registry.json`, and
-  `manifest.json`
+- `build_outline.py` rebuilds `planning/outline.md` from accepted chapters plus
+  `planning/arc_outline.md`, `planning/chapter_cards.md`,
+  `planning/thread_registry.json`, and `manifest.json`
 - `build_arc_summary.py` rebuilds `arc_summary.md` from the same source-of-truth
   stack
 - both helpers now avoid fixed chapter counts and stale story-specific
@@ -160,16 +160,16 @@ Export helper behavior:
 
 ### Foundation And Planning
 
-- `seed.txt`
-- `world.md`
-- `characters.md`
-- `character_engine.json`
-- `perspective.md`
-- `voice.md`
-- `arc_outline.md`
-- `chapter_cards.md`
-- `thread_registry.json`
-- `canon.md`
+- `seed.md`
+- `planning/world.md`
+- `planning/characters.md`
+- `planning/character_engine.json`
+- `planning/perspective.md`
+- `planning/voice.md`
+- `planning/arc_outline.md`
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
+- `planning/canon.md`
 
 ### Drafting And Accepted Prose
 
@@ -189,28 +189,28 @@ Export helper behavior:
 
 ### Compatibility And Presentation
 
-- `outline.md`
+- `planning/outline.md`
 - `arc_summary.md`
 - `manuscript.md`
 - `state.json`
 - `results.tsv`
 
-`outline.md` is no longer the planning source of truth. It is a compatibility
-and export artifact.
+`planning/outline.md` is no longer the planning source of truth. It is a
+compatibility and export artifact.
 
 ## New-Mode Draft Context
 
 In new mode, `draft_chapter.py` assembles context in this order:
 
-1. `perspective.md`
-2. `voice.md`
-3. `character_engine.json`
+1. `planning/perspective.md`
+2. `planning/voice.md`
+3. `planning/character_engine.json`
 4. `state/story_state/ch_{n-1}.json`
-5. current chapter card from `chapter_cards.md`
+5. current chapter card from `planning/chapter_cards.md`
 6. `scene_options/ch_XX.json`
-7. local thread window from `thread_registry.json`
-8. `world.md`
-9. `canon.md`
+7. local thread window from `planning/thread_registry.json`
+8. `planning/world.md`
+9. `planning/canon.md`
 
 New-mode behavior:
 
@@ -227,17 +227,17 @@ Legacy outline mode still exists through `draft_chapter.py --mode legacy`.
 
 Current planning truth is split across:
 
-- `arc_outline.md` for irreversible turns, major reveals, pressure
+- `planning/arc_outline.md` for irreversible turns, major reveals, pressure
   escalations, and candidate risk chapters
-- `chapter_cards.md` for chapter-level structural cards
-- `thread_registry.json` for typed plot, pressure, echo, and texture threads
+- `planning/chapter_cards.md` for chapter-level structural cards
+- `planning/thread_registry.json` for typed plot, pressure, echo, and texture threads
 
 Current compatibility rule:
 
-- `gen_outline.py` and `gen_outline_part2.py` keep `outline.md` alive for
+- `gen_outline.py` and `gen_outline_part2.py` keep `planning/outline.md` alive for
   legacy consumers
-- `build_outline.py` refreshes `outline.md` during export from current accepted
-  prose plus the planning split
+- `build_outline.py` refreshes `planning/outline.md` during export from current
+  accepted prose plus the planning split
 
 ## Manifest And Consistency Gate
 
@@ -291,7 +291,7 @@ Currently used by the codebase:
 If you are comparing this branch to the older outline-led flow:
 
 - do not describe summary-led full eval as the primary revision loop
-- do not describe `outline.md` as the planning source of truth
+- do not describe `planning/outline.md` as the planning source of truth
 - do not collapse review into revision
 - do describe risk chapters, variants, manifest generation, and consistency
   checks as active runtime behavior

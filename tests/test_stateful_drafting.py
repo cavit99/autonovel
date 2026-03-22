@@ -319,13 +319,15 @@ The narration revises itself when it gets too sure.
     def test_detect_new_mode_and_prompt_include_pr3_constraints(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            (base / "perspective.md").write_text(
+            planning = base / "planning"
+            planning.mkdir()
+            (planning / "perspective.md").write_text(
                 "# Perspective\n\n## Obsessions\n- sound before sight\n\n## Blind Spots\n- misses tenderness\n\n"
                 "## Sense of Humor\n- pomp collapsing under detail\n\n## The Unbearable\n- public shame\n\n"
                 "## Self-Awareness\nKnows he performs.\n\n## Formal Signatures\n- pressure -> shorter clauses\n"
             )
-            (base / "voice.md").write_text("# Voice\n")
-            (base / "character_engine.json").write_text(
+            (planning / "voice.md").write_text("# Voice\n")
+            (planning / "character_engine.json").write_text(
                 json.dumps(
                     {
                         "Cass": {
@@ -349,14 +351,14 @@ The narration revises itself when it gets too sure.
                     indent=2,
                 )
             )
-            (base / "chapter_cards.md").write_text(
+            (planning / "chapter_cards.md").write_text(
                 "# Chapter Cards\n\n## Ch 01: Signals\nfocus_character: Cass\ngoal: Get proof\npressure: Public corridor\n"
                 "reversal: The witness hedges\naftermath: Cass leaves exposed\n"
                 "irreversible_change: Cass commits to the lie\nallowed_ambiguity: Whether the witness is afraid\n"
                 "time_span: One afternoon\nscene_density: high\nscene_type: confrontation\n"
                 "scene_method: dialogue_driven\nrisk: pov\n"
             )
-            (base / "thread_registry.json").write_text(
+            (planning / "thread_registry.json").write_text(
                 json.dumps(
                     [
                         {
@@ -371,8 +373,8 @@ The narration revises itself when it gets too sure.
                     indent=2,
                 )
             )
-            (base / "world.md").write_text("# World\n")
-            (base / "canon.md").write_text("# Canon\n")
+            (planning / "world.md").write_text("# World\n")
+            (planning / "canon.md").write_text("# Canon\n")
             scene_dir = base / "scene_options"
             scene_dir.mkdir(parents=True)
             (scene_dir / "ch_01.json").write_text(

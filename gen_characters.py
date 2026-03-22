@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 One-shot characters.md generator for foundation phase.
-Reads seed.txt + voice.md + world.md, calls the writer model, and prints
+Reads seed.md + planning/voice.md + planning/world.md, calls the writer model, and prints
 the generated markdown. Optionally emits a structured character engine.
 """
 
@@ -23,6 +23,12 @@ from foundation_mind import (
     extract_json_object,
     normalize_character_engine,
 )
+from project_paths import (
+    ensure_parent_dir,
+    planning_artifact_path,
+    readable_planning_artifact_path,
+    require_seed_path,
+)
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -30,7 +36,7 @@ load_dotenv(BASE_DIR / ".env")
 WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
-DEFAULT_ENGINE_PATH = BASE_DIR / "character_engine.json"
+DEFAULT_ENGINE_PATH = planning_artifact_path("character_engine", BASE_DIR)
 
 CHARACTER_SYSTEM = (
     "You are a character designer for literary fiction with deep knowledge of "
@@ -218,6 +224,7 @@ Rules:
 def write_engine(engine_text: str, output_path: Path) -> Path:
     raw = extract_json_object(engine_text)
     normalized = normalize_character_engine(raw)
+    ensure_parent_dir(output_path)
     output_path.write_text(json.dumps(normalized, indent=2) + "\n")
     return output_path
 
@@ -237,9 +244,9 @@ def main() -> None:
         print("ERROR: ANTHROPIC_API_KEY not set in .env", file=sys.stderr)
         sys.exit(1)
 
-    seed = read_required(BASE_DIR / "seed.txt")
-    world = read_required(BASE_DIR / "world.md")
-    voice = read_required(BASE_DIR / "voice.md")
+    seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
+    world = read_required(readable_planning_artifact_path("world", BASE_DIR))
+    voice = read_required(readable_planning_artifact_path("voice", BASE_DIR))
     voice_part2 = extract_voice_part2(voice)
 
     prompt = build_character_prompt(seed, world, voice_part2)

@@ -22,6 +22,12 @@ from planning_split import (
     read_text_if_exists,
     render_arc_outline,
 )
+from project_paths import (
+    ensure_parent_dir,
+    planning_artifact_path,
+    readable_planning_artifact_path,
+    require_seed_path,
+)
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -29,7 +35,7 @@ load_dotenv(BASE_DIR / ".env")
 WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
-DEFAULT_OUTPUT = BASE_DIR / "arc_outline.md"
+DEFAULT_OUTPUT = planning_artifact_path("arc_outline", BASE_DIR)
 
 SYSTEM_PROMPT = (
     "You are a novel architect converting planning materials into a lean arc outline. "
@@ -101,7 +107,7 @@ Rules:
 
 
 def derive_arc() -> dict[str, object]:
-    legacy_outline = read_text_if_exists(BASE_DIR / "outline.md")
+    legacy_outline = read_text_if_exists(readable_planning_artifact_path("outline", BASE_DIR))
     return derive_arc_from_outline(legacy_outline)
 
 
@@ -109,18 +115,19 @@ def generate_arc(*, output_path: Path = DEFAULT_OUTPUT) -> dict[str, object]:
     try:
         if not API_KEY:
             raise RuntimeError("missing API key")
-        seed = read_required(BASE_DIR / "seed.txt")
-        world = read_required(BASE_DIR / "world.md")
-        characters = read_required(BASE_DIR / "characters.md")
-        perspective = read_required(BASE_DIR / "perspective.md")
+        seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
+        world = read_required(readable_planning_artifact_path("world", BASE_DIR))
+        characters = read_required(readable_planning_artifact_path("characters", BASE_DIR))
+        perspective = read_required(readable_planning_artifact_path("perspective", BASE_DIR))
         mystery = read_required(BASE_DIR / "MYSTERY.md")
-        voice = read_required(BASE_DIR / "voice.md")
+        voice = read_required(readable_planning_artifact_path("voice", BASE_DIR))
         raw = call_writer(build_prompt(seed, world, characters, perspective, mystery, voice))
         arc = normalize_arc_payload(extract_json_object(raw))
     except Exception as exc:
         print(f"WARNING: gen_arc.py falling back to derived arc outline: {exc}", file=sys.stderr)
         arc = derive_arc()
 
+    ensure_parent_dir(output_path)
     output_path.write_text(render_arc_outline(arc) + "\n")
     return arc
 

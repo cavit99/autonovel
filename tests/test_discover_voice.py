@@ -16,10 +16,12 @@ from foundation_mind import VOICE_PART2_HEADING, render_voice_identity
 
 class DiscoverVoiceTests(unittest.TestCase):
     def _write_required_inputs(self, root: Path) -> None:
-        (root / "seed.txt").write_text("A bellmaker's son chases the wrong ledger.", encoding="utf-8")
-        (root / "world.md").write_text("# World\n\nGuild bells govern the city.", encoding="utf-8")
-        (root / "characters.md").write_text("# Characters\n\nCass Bellwright wants the truth.", encoding="utf-8")
-        (root / "perspective.md").write_text(
+        planning = root / "planning"
+        planning.mkdir()
+        (root / "seed.md").write_text("A bellmaker's son chases the wrong ledger.", encoding="utf-8")
+        (planning / "world.md").write_text("# World\n\nGuild bells govern the city.", encoding="utf-8")
+        (planning / "characters.md").write_text("# Characters\n\nCass Bellwright wants the truth.", encoding="utf-8")
+        (planning / "perspective.md").write_text(
             "# Perspective\n\n## Obsessions\n- sound before sight\n",
             encoding="utf-8",
         )
@@ -87,14 +89,14 @@ class DiscoverVoiceTests(unittest.TestCase):
         return responses
 
     def _run_discovery(self, root: Path, voice_output: Path) -> tuple[str, str, Path, int]:
-        discovery_output = root / "voice_discovery.json"
+        discovery_output = root / "planning" / "voice_discovery.json"
         responses = iter(self._model_responses())
         stdout = io.StringIO()
         stderr = io.StringIO()
 
         with (
             patch("discover_voice.BASE_DIR", root),
-            patch("discover_voice.PERSPECTIVE_PATH", root / "perspective.md"),
+            patch("discover_voice.PERSPECTIVE_PATH", root / "planning" / "perspective.md"),
             patch("discover_voice.API_KEY", "test-key"),
             patch("discover_voice.available_registers", return_value=self._registers()),
             patch("discover_voice.call_model", side_effect=lambda **_kwargs: next(responses)) as mock_call_model,
@@ -121,7 +123,7 @@ class DiscoverVoiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._write_required_inputs(root)
-            voice_output = root / "voice.md"
+            voice_output = root / "planning" / "voice.md"
             voice_output.write_text(
                 "# Voice Profile\n\n"
                 "## Part 1: Guardrails (permanent, all novels)\n"
@@ -150,7 +152,7 @@ class DiscoverVoiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             self._write_required_inputs(root)
-            voice_output = root / "voice.md"
+            voice_output = root / "planning" / "voice.md"
 
             stdout, stderr, discovery_output, call_count = self._run_discovery(root, voice_output)
             expected_part2 = render_voice_identity(self._voice_profile())

@@ -12,6 +12,13 @@ from typing import Any
 
 from evidence_tools import compute_sha256, load_json
 from planning_split import parse_arc_outline, parse_chapter_cards
+from project_paths import (
+    PLANNING_DIRNAME,
+    ensure_planning_dir,
+    migrate_planning_artifacts,
+    readable_planning_artifact_path,
+    seed_path,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 CHAPTERS_DIR = BASE_DIR / "chapters"
@@ -22,18 +29,18 @@ MANIFEST_PATH = BASE_DIR / "manifest.json"
 MANIFEST_VERSION = 1
 
 FILE_KEYS = {
-    "seed": Path("seed.txt"),
-    "world": Path("world.md"),
-    "characters": Path("characters.md"),
-    "character_engine": Path("character_engine.json"),
-    "perspective": Path("perspective.md"),
-    "voice": Path("voice.md"),
-    "voice_discovery": Path("voice_discovery.json"),
-    "arc_outline": Path("arc_outline.md"),
-    "chapter_cards": Path("chapter_cards.md"),
-    "thread_registry": Path("thread_registry.json"),
-    "canon": Path("canon.md"),
-    "outline": Path("outline.md"),
+    "seed": Path(seed_path().name),
+    "world": Path(PLANNING_DIRNAME) / "world.md",
+    "characters": Path(PLANNING_DIRNAME) / "characters.md",
+    "character_engine": Path(PLANNING_DIRNAME) / "character_engine.json",
+    "perspective": Path(PLANNING_DIRNAME) / "perspective.md",
+    "voice": Path(PLANNING_DIRNAME) / "voice.md",
+    "voice_discovery": Path(PLANNING_DIRNAME) / "voice_discovery.json",
+    "arc_outline": Path(PLANNING_DIRNAME) / "arc_outline.md",
+    "chapter_cards": Path(PLANNING_DIRNAME) / "chapter_cards.md",
+    "thread_registry": Path(PLANNING_DIRNAME) / "thread_registry.json",
+    "canon": Path(PLANNING_DIRNAME) / "canon.md",
+    "outline": Path(PLANNING_DIRNAME) / "outline.md",
     "arc_summary": Path("arc_summary.md"),
     "manuscript": Path("manuscript.md"),
     "state": Path("state.json"),
@@ -128,7 +135,7 @@ def manuscript_text(base_dir: Path = BASE_DIR) -> str:
 
 
 def planned_chapter_count(base_dir: Path = BASE_DIR) -> int:
-    chapter_cards_path = base_dir / "chapter_cards.md"
+    chapter_cards_path = readable_planning_artifact_path("chapter_cards", base_dir)
     if chapter_cards_path.exists():
         cards = parse_chapter_cards(chapter_cards_path.read_text(encoding="utf-8"))
         if cards:
@@ -141,7 +148,7 @@ def planned_chapter_count(base_dir: Path = BASE_DIR) -> int:
         if isinstance(total, int) and total > 0:
             return total
 
-    outline_path = base_dir / "outline.md"
+    outline_path = readable_planning_artifact_path("outline", base_dir)
     if outline_path.exists():
         matches = re.findall(r"^###\s*Ch(?:apter)?\s*(\d+)", outline_path.read_text(encoding="utf-8"), re.MULTILINE)
         if matches:
@@ -151,14 +158,14 @@ def planned_chapter_count(base_dir: Path = BASE_DIR) -> int:
 
 
 def risk_chapters(base_dir: Path = BASE_DIR) -> list[int]:
-    chapter_cards_path = base_dir / "chapter_cards.md"
+    chapter_cards_path = readable_planning_artifact_path("chapter_cards", base_dir)
     risks: set[int] = set()
     if chapter_cards_path.exists():
         for card in parse_chapter_cards(chapter_cards_path.read_text(encoding="utf-8")):
             if str(card.get("risk", "none")).strip().lower() != "none":
                 risks.add(int(card.get("number", 0)))
 
-    arc_path = base_dir / "arc_outline.md"
+    arc_path = readable_planning_artifact_path("arc_outline", base_dir)
     if arc_path.exists():
         arc = parse_arc_outline(arc_path.read_text(encoding="utf-8"))
         for chapter in arc.get("candidate_risk_chapters", []):
@@ -175,14 +182,14 @@ def derive_title(base_dir: Path = BASE_DIR) -> str:
     if isinstance(manifest, dict) and manifest.get("title"):
         return str(manifest["title"])
 
-    arc_path = base_dir / "arc_outline.md"
+    arc_path = readable_planning_artifact_path("arc_outline", base_dir)
     if arc_path.exists():
         arc = parse_arc_outline(arc_path.read_text(encoding="utf-8"))
         title = str(arc.get("title", "")).strip()
         if title:
             return title
 
-    for candidate in (base_dir / "outline.md", base_dir / "chapters" / "ch_01.md"):
+    for candidate in (readable_planning_artifact_path("outline", base_dir), base_dir / "chapters" / "ch_01.md"):
         if not candidate.exists():
             continue
         for line in candidate.read_text(encoding="utf-8").splitlines():
@@ -193,6 +200,7 @@ def derive_title(base_dir: Path = BASE_DIR) -> str:
 
 
 def files_index(base_dir: Path = BASE_DIR) -> dict[str, str]:
+    ensure_planning_dir(base_dir)
     files: dict[str, str] = {}
     for key, rel in FILE_KEYS.items():
         path = base_dir / rel
@@ -271,6 +279,7 @@ def current_models() -> dict[str, str]:
 
 
 def build_manifest_payload(base_dir: Path = BASE_DIR, *, phase: str | None = None, chapter: int | None = None) -> dict[str, Any]:
+    migrate_planning_artifacts(base_dir)
     files = files_index(base_dir)
     chapter_count = len(chapter_paths(base_dir))
     payload = {
@@ -318,7 +327,7 @@ def missing_required_artifacts(manifest: dict[str, Any], phase: str, chapter: in
 
 
 def outline_card_count(base_dir: Path = BASE_DIR) -> int:
-    outline_path = base_dir / "outline.md"
+    outline_path = readable_planning_artifact_path("outline", base_dir)
     if not outline_path.exists():
         return 0
     matches = re.findall(r"^###\s*Ch(?:apter)?\s*(\d+)", outline_path.read_text(encoding="utf-8"), re.MULTILINE)
@@ -326,7 +335,7 @@ def outline_card_count(base_dir: Path = BASE_DIR) -> int:
 
 
 def outline_titles(base_dir: Path = BASE_DIR) -> dict[int, str]:
-    outline_path = base_dir / "outline.md"
+    outline_path = readable_planning_artifact_path("outline", base_dir)
     if not outline_path.exists():
         return {}
     titles: dict[int, str] = {}
@@ -343,6 +352,7 @@ def collect_consistency_issues(
     phase: str | None = None,
     chapter: int | None = None,
 ) -> list[str]:
+    migrate_planning_artifacts(base_dir)
     manifest = manifest or load_manifest(base_dir / "manifest.json")
     issues: list[str] = []
     active_phase = phase or str(manifest.get("phase", "foundation"))
@@ -378,8 +388,9 @@ def collect_consistency_issues(
     elif active_phase in {"revision", "review", "export"}:
         issues.append(f"phase {active_phase} requires an evidence pack but manifest has none")
 
-    cards_path = base_dir / "chapter_cards.md"
-    if active_phase != "export" and cards_path.exists() and (base_dir / "outline.md").exists():
+    cards_path = readable_planning_artifact_path("chapter_cards", base_dir)
+    outline_path = readable_planning_artifact_path("outline", base_dir)
+    if active_phase != "export" and cards_path.exists() and outline_path.exists():
         cards = parse_chapter_cards(cards_path.read_text(encoding="utf-8"))
         if outline_card_count(base_dir) != len(cards):
             issues.append("outline.md chapter count diverges from chapter_cards.md")
@@ -392,8 +403,9 @@ def collect_consistency_issues(
                     issues.append(f"outline.md title for chapter {number} diverges from chapter_cards.md")
                     break
 
-    if active_phase != "export" and (base_dir / "thread_registry.json").exists() and (base_dir / "outline.md").exists():
-        outline_text = (base_dir / "outline.md").read_text(encoding="utf-8")
+    threads_path = readable_planning_artifact_path("thread_registry", base_dir)
+    if active_phase != "export" and threads_path.exists() and outline_path.exists():
+        outline_text = outline_path.read_text(encoding="utf-8")
         if "Foreshadowing Ledger" not in outline_text and "FORESHADOWING LEDGER" not in outline_text:
             issues.append("outline.md is missing a foreshadowing ledger while thread_registry.json exists")
 

@@ -11,6 +11,7 @@ from typing import Any
 
 from manifest_tools import build_manifest_payload, chapter_paths, load_manifest
 from planning_split import normalize_thread_registry, parse_arc_outline, parse_chapter_cards
+from project_paths import readable_planning_artifact_path
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -54,7 +55,7 @@ def read_text_if_exists(path: Path) -> str:
 
 
 def load_arc(base_dir: Path) -> dict[str, Any]:
-    path = base_dir / "arc_outline.md"
+    path = readable_planning_artifact_path("arc_outline", base_dir)
     if not path.exists():
         return {
             "title": "",
@@ -67,14 +68,14 @@ def load_arc(base_dir: Path) -> dict[str, Any]:
 
 
 def load_cards(base_dir: Path) -> list[dict[str, Any]]:
-    path = base_dir / "chapter_cards.md"
+    path = readable_planning_artifact_path("chapter_cards", base_dir)
     if not path.exists():
         return []
     return parse_chapter_cards(path.read_text(encoding="utf-8"))
 
 
 def load_threads(base_dir: Path) -> list[dict[str, Any]]:
-    path = base_dir / "thread_registry.json"
+    path = readable_planning_artifact_path("thread_registry", base_dir)
     if not path.exists():
         return []
     try:
@@ -329,8 +330,8 @@ def render_outline_text(base_dir: Path = BASE_DIR) -> str:
 
     lines.append("## Runtime Snapshot")
     lines.append(
-        "- Source of truth: accepted chapters plus arc_outline.md, chapter_cards.md, "
-        "thread_registry.json, and manifest.json"
+        "- Source of truth: accepted chapters plus planning/arc_outline.md, planning/chapter_cards.md, "
+        "planning/thread_registry.json, and manifest.json"
     )
     lines.append(
         f"- Phase: {context.manifest.get('phase', 'unknown')} | accepted chapters: "
@@ -345,8 +346,8 @@ def render_outline_text(base_dir: Path = BASE_DIR) -> str:
 
     lines.append("## Compatibility Note")
     lines.append(
-        "outline.md is a compatibility/export artifact. Planning truth lives in arc_outline.md, "
-        "chapter_cards.md, thread_registry.json, and manifest.json."
+        "planning/outline.md is a compatibility/export artifact. Planning truth lives in "
+        "planning/arc_outline.md, planning/chapter_cards.md, planning/thread_registry.json, and manifest.json."
     )
     lines.append("")
 
@@ -479,8 +480,8 @@ def render_arc_summary_text(base_dir: Path = BASE_DIR) -> str:
     context = load_export_context(base_dir)
     lines = [f"# {context.title}", "", "## Full-Arc Summary", ""]
     lines.append(
-        "This summary is rebuilt from accepted chapters plus arc_outline.md, chapter_cards.md, "
-        "thread_registry.json, and manifest.json."
+        "This summary is rebuilt from accepted chapters plus planning/arc_outline.md, "
+        "planning/chapter_cards.md, planning/thread_registry.json, and manifest.json."
     )
     lines.append(
         f"Current phase: {context.manifest.get('phase', 'unknown')}. Accepted chapters: "

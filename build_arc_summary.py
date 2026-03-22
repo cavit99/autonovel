@@ -12,8 +12,8 @@ from export_rebuild import BASE_DIR, render_arc_summary_text
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Rebuild arc_summary.md from accepted chapters, arc_outline.md, "
-            "chapter_cards.md, thread_registry.json, and manifest.json."
+            "Rebuild arc_summary.md from accepted chapters, planning/arc_outline.md, "
+            "planning/chapter_cards.md, planning/thread_registry.json, and manifest.json."
         )
     )
     parser.add_argument(

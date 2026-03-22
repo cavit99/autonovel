@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 One-shot world.md generator for foundation phase.
-Reads seed.txt + voice.md, calls the writer model, outputs world.md content.
+Reads seed.md + planning/voice.md, calls the writer model, outputs planning/world.md content.
 """
 import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+from project_paths import readable_planning_artifact_path, require_seed_path
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -40,8 +41,8 @@ def call_writer(prompt, max_tokens=16000):
     resp.raise_for_status()
     return resp.json()["content"][0]["text"]
 
-seed = (BASE_DIR / "seed.txt").read_text()
-voice = (BASE_DIR / "voice.md").read_text()
+seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
+voice = readable_planning_artifact_path("voice", BASE_DIR).read_text(encoding="utf-8")
 craft = (BASE_DIR / "CRAFT.md").read_text()
 
 # Extract voice Part 2 only (the novel-specific voice)

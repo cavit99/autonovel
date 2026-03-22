@@ -4,7 +4,7 @@ run_pipeline.py — Orchestrate the autonovel pipeline from foundation to export
 
 Usage:
   python run_pipeline.py                    # run from current state
-  python run_pipeline.py --from-scratch     # start fresh from seed.txt
+  python run_pipeline.py --from-scratch     # start fresh from seed.md
   python run_pipeline.py --phase foundation # run only foundation
   python run_pipeline.py --phase drafting   # run only drafting
   python run_pipeline.py --phase revision   # run only revision
@@ -25,6 +25,15 @@ from datetime import datetime
 from pathlib import Path
 
 from manifest_tools import MANIFEST_PATH, load_manifest, planned_chapter_count, risk_chapters
+from project_paths import (
+    ensure_parent_dir,
+    ensure_planning_dir,
+    legacy_planning_artifact_paths,
+    migrate_planning_artifacts,
+    planning_artifact_path,
+    planning_artifact_paths,
+    require_seed_path,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -56,6 +65,17 @@ PLATEAU_DELTA = 0.3
 
 PHASE_ORDER = ["foundation", "drafting", "revision", "review", "export"]
 PIPELINE_GIT_STAGE_PATHSPECS = (
+    "planning/world.md",
+    "planning/characters.md",
+    "planning/character_engine.json",
+    "planning/perspective.md",
+    "planning/voice.md",
+    "planning/voice_discovery.json",
+    "planning/arc_outline.md",
+    "planning/chapter_cards.md",
+    "planning/thread_registry.json",
+    "planning/outline.md",
+    "planning/canon.md",
     "world.md",
     "characters.md",
     "character_engine.json",
@@ -198,6 +218,7 @@ def uv_run(script: str, timeout: int = 600, check: bool = False) -> subprocess.C
 def uv_run_to_file(script: str, output_path: Path, timeout: int = 600) -> subprocess.CompletedProcess:
     result = uv_run(script, timeout=timeout)
     if result.returncode == 0:
+        ensure_parent_dir(output_path)
         output_path.write_text(result.stdout.rstrip() + "\n", encoding="utf-8")
     return result
 
@@ -289,26 +310,18 @@ def clear_directory_contents(path: Path) -> list[Path]:
 
 
 def generated_planning_files() -> list[Path]:
-    # These are regenerated from seed.txt during the foundation phase.
-    return [
-        BASE_DIR / "world.md",
-        BASE_DIR / "characters.md",
-        BASE_DIR / "character_engine.json",
-        BASE_DIR / "perspective.md",
-        BASE_DIR / "voice.md",
-        BASE_DIR / "voice_discovery.json",
-        BASE_DIR / "arc_outline.md",
-        BASE_DIR / "chapter_cards.md",
-        BASE_DIR / "thread_registry.json",
-        BASE_DIR / "outline.md",
-        BASE_DIR / "canon.md",
-    ]
+    # These are regenerated from seed.md during the foundation phase.
+    return list(planning_artifact_paths(BASE_DIR).values())
+
+
+def legacy_generated_planning_files() -> list[Path]:
+    return list(legacy_planning_artifact_paths(BASE_DIR).values())
 
 
 def clear_from_scratch_artifacts() -> list[Path]:
     removed: list[Path] = []
 
-    for path in generated_planning_files():
+    for path in generated_planning_files() + legacy_generated_planning_files():
         if path.exists():
             path.unlink()
             removed.append(path)
@@ -623,11 +636,18 @@ def run_foundation(state: dict) -> dict:
         state["iteration"] = i
 
         step("Generating world bible...")
-        require_success(uv_run_to_file("gen_world.py", BASE_DIR / "world.md", timeout=300), "gen_world.py")
+        require_success(
+            uv_run_to_file("gen_world.py", planning_artifact_path("world", BASE_DIR), timeout=300),
+            "gen_world.py",
+        )
 
         step("Generating characters and character engine...")
         require_success(
-            uv_run_to_file("gen_characters.py --emit-engine", BASE_DIR / "characters.md", timeout=300),
+            uv_run_to_file(
+                "gen_characters.py --emit-engine",
+                planning_artifact_path("characters", BASE_DIR),
+                timeout=300,
+            ),
             "gen_characters.py --emit-engine",
         )
 
@@ -650,7 +670,10 @@ def run_foundation(state: dict) -> dict:
         require_success(uv_run("gen_outline_part2.py", timeout=300), "gen_outline_part2.py")
 
         step("Generating canon...")
-        require_success(uv_run_to_file("gen_canon.py", BASE_DIR / "canon.md", timeout=300), "gen_canon.py")
+        require_success(
+            uv_run_to_file("gen_canon.py", planning_artifact_path("canon", BASE_DIR), timeout=300),
+            "gen_canon.py",
+        )
 
         build_manifest_and_gate("foundation")
 
@@ -922,19 +945,25 @@ def run_export(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def run_pipeline(args: argparse.Namespace) -> None:
+    migrated = migrate_planning_artifacts(BASE_DIR)
+    if migrated:
+        step(f"Migrated {len(migrated)} legacy planning artifact(s) into planning/")
+
     if args.from_scratch:
         banner("STARTING FROM SCRATCH")
-        seed_file = BASE_DIR / "seed.txt"
-        if not seed_file.exists():
-            print("ERROR: seed.txt not found. Cannot start from scratch without a seed.")
+        try:
+            seed_file = require_seed_path(BASE_DIR)
+        except FileNotFoundError as exc:
+            print(f"ERROR: {exc}")
             sys.exit(1)
         removed = clear_from_scratch_artifacts()
-        step(f"Cleared {len(removed)} generated artifact(s) before restarting from seed.txt")
+        step(f"Cleared {len(removed)} generated artifact(s) before restarting from {seed_file.name}")
         state = default_state()
         save_state(state)
     else:
         state = load_state()
 
+    ensure_planning_dir(BASE_DIR)
     CHAPTERS_DIR.mkdir(exist_ok=True)
     BRIEFS_DIR.mkdir(exist_ok=True)
     EDIT_LOGS_DIR.mkdir(exist_ok=True)
@@ -1012,7 +1041,7 @@ def main() -> None:
         epilog="""\
 Examples:
   python run_pipeline.py                     # resume from current state
-  python run_pipeline.py --from-scratch      # start fresh from seed.txt
+  python run_pipeline.py --from-scratch      # start fresh from seed.md
   python run_pipeline.py --phase foundation  # run only foundation
   python run_pipeline.py --phase drafting    # run only drafting
   python run_pipeline.py --phase revision    # run only revision
@@ -1020,7 +1049,7 @@ Examples:
   python run_pipeline.py --phase export      # run only export
 """,
     )
-    parser.add_argument("--from-scratch", action="store_true", help="Reset state and start from seed.txt")
+    parser.add_argument("--from-scratch", action="store_true", help="Reset state and start from seed.md")
     parser.add_argument("--phase", choices=PHASE_ORDER, help="Run only a specific phase")
     parser.add_argument("--max-cycles", type=int, default=None, help=f"Maximum revision cycles (default: {MAX_REVISION_CYCLES})")
     args = parser.parse_args()

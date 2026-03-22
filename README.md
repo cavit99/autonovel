@@ -19,9 +19,9 @@ Current runtime features:
 
 - governing perspective via `gen_perspective.py`
 - voice discovery via `discover_voice.py`
-- structured character constraints via `character_engine.json`
-- planning split across `arc_outline.md`, `chapter_cards.md`, and
-  `thread_registry.json`
+- structured character constraints via `planning/character_engine.json`
+- planning split across `planning/arc_outline.md`, `planning/chapter_cards.md`,
+  and `planning/thread_registry.json`
 - stateful drafting with `advance_state.py` and writer-backed `plan_scene.py`
 - risk-chapter and critical-chapter variant drafting via `draft_variant.py`
   and `compare_variants.py`
@@ -35,11 +35,12 @@ Current runtime features:
 
 Important compatibility note:
 
-- `outline.md` and `arc_summary.md` still exist, but they are now
+- `planning/outline.md` and `arc_summary.md` still exist, but they are now
   compatibility and export artifacts rebuilt from the current planning stack
   plus accepted chapters
-- the planning source of truth is `arc_outline.md`, `chapter_cards.md`,
-  `thread_registry.json`, accepted chapters, and `manifest.json`
+- the planning source of truth is `planning/arc_outline.md`,
+  `planning/chapter_cards.md`, `planning/thread_registry.json`, accepted
+  chapters, and `manifest.json`
 
 ## Quick Start
 
@@ -49,7 +50,8 @@ cp .env.example .env
 uv run python seed.py
 ```
 
-If `seed.py` is not part of your workflow, write `seed.txt` directly.
+If `seed.py` is not part of your workflow, write `seed.md` directly. Existing
+`seed.txt` files are left alone and no longer read automatically.
 
 To run the full automated pipeline from scratch:
 
@@ -79,16 +81,16 @@ uv run python run_pipeline.py --phase export
 
 `run_pipeline.py` currently runs foundation in this order:
 
-1. `gen_world.py` -> `world.md`
-2. `gen_characters.py --emit-engine` -> `characters.md` plus
-   `character_engine.json`
+1. `gen_world.py` -> `planning/world.md`
+2. `gen_characters.py --emit-engine` -> `planning/characters.md` plus
+   `planning/character_engine.json`
 3. `gen_perspective.py`
 4. `discover_voice.py --trials 8`
 5. `gen_arc.py`
 6. `gen_chapter_cards.py`
 7. `gen_thread_registry.py`
 8. `gen_outline_part2.py` for legacy outline compatibility
-9. `gen_canon.py` -> `canon.md`
+9. `gen_canon.py` -> `planning/canon.md`
 10. `build_manifest.py --phase foundation`
 11. `consistency_gate.py --phase foundation`
 12. `voice_fingerprint.py`
@@ -114,13 +116,13 @@ For each chapter, the orchestrator currently does this:
 `draft_chapter.py --mode auto` prefers the PR3+ path when the governing
 artifacts exist:
 
-- `perspective.md`
-- `voice.md`
-- `character_engine.json`
-- `chapter_cards.md`
-- `thread_registry.json`
-- `world.md`
-- `canon.md`
+- `planning/perspective.md`
+- `planning/voice.md`
+- `planning/character_engine.json`
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
+- `planning/world.md`
+- `planning/canon.md`
 - `scene_options/ch_NN.json`
 - `state/story_state/ch_NN.json` for prior accepted chapters
 
@@ -173,9 +175,9 @@ uv run python consistency_gate.py --phase export
 ```
 
 `build_outline.py` and `build_arc_summary.py` now derive from accepted
-chapters, `arc_outline.md`, `chapter_cards.md`, `thread_registry.json`, and
-`manifest.json`. They no longer rely on fixed chapter counts or legacy
-story-specific assumptions.
+chapters, `planning/arc_outline.md`, `planning/chapter_cards.md`,
+`planning/thread_registry.json`, and `manifest.json`. They no longer rely on
+fixed chapter counts or legacy story-specific assumptions.
 
 ## Manual Targeted Workflow
 
@@ -184,14 +186,14 @@ You can still run pieces of the pipeline directly.
 Foundation:
 
 ```bash
-uv run python gen_world.py > world.md
-uv run python gen_characters.py --emit-engine > characters.md
+uv run python gen_world.py > planning/world.md
+uv run python gen_characters.py --emit-engine > planning/characters.md
 uv run python gen_perspective.py
 uv run python discover_voice.py --trials 8
 uv run python gen_arc.py
 uv run python gen_chapter_cards.py
 uv run python gen_thread_registry.py
-uv run python gen_canon.py > canon.md
+uv run python gen_canon.py > planning/canon.md
 uv run python gen_outline_part2.py
 uv run python build_manifest.py --phase foundation
 uv run python consistency_gate.py --phase foundation
@@ -233,16 +235,16 @@ uv run python review.py
 
 Current source-of-truth artifacts:
 
-- `seed.txt`
-- `world.md`
-- `characters.md`
-- `character_engine.json`
-- `perspective.md`
-- `voice.md`
-- `arc_outline.md`
-- `chapter_cards.md`
-- `thread_registry.json`
-- `canon.md`
+- `seed.md`
+- `planning/world.md`
+- `planning/characters.md`
+- `planning/character_engine.json`
+- `planning/perspective.md`
+- `planning/voice.md`
+- `planning/arc_outline.md`
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
+- `planning/canon.md`
 - `scene_options/ch_XX.json`
 - `state/story_state/ch_XX.json`
 - `chapters/ch_XX.md`
@@ -250,7 +252,7 @@ Current source-of-truth artifacts:
 
 Compatibility or export artifacts:
 
-- `outline.md`
+- `planning/outline.md`
 - `arc_summary.md`
 - `manuscript.md`
 - `reviews.md`
@@ -324,12 +326,13 @@ See `.env.example` for the starter template.
 
 If you were using the old outline-led flow:
 
-- treat `outline.md` as a compatibility artifact, not the planning truth
+- treat `planning/outline.md` as a compatibility artifact, not the planning truth
 - treat `arc_summary.md` as a compatibility/export summary, not the primary
   evaluation input
 - use `review` as its own phase after revision, not as part of revision
-- prefer `arc_outline.md`, `chapter_cards.md`, `thread_registry.json`,
-  accepted chapters, and `manifest.json` when inspecting current story state
+- prefer `planning/arc_outline.md`, `planning/chapter_cards.md`,
+  `planning/thread_registry.json`, accepted chapters, and `manifest.json`
+  when inspecting current story state
 
 ## Further Reading
 

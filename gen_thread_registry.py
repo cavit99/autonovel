@@ -21,6 +21,7 @@ from planning_split import (
     normalize_thread_registry,
     read_text_if_exists,
 )
+from project_paths import ensure_parent_dir, planning_artifact_path, readable_planning_artifact_path
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -28,7 +29,7 @@ load_dotenv(BASE_DIR / ".env")
 WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
-DEFAULT_OUTPUT = BASE_DIR / "thread_registry.json"
+DEFAULT_OUTPUT = planning_artifact_path("thread_registry", BASE_DIR)
 
 SYSTEM_PROMPT = (
     "You convert novel planning materials into a typed thread registry. "
@@ -94,7 +95,7 @@ Rules:
 
 
 def derive_threads() -> list[dict[str, object]]:
-    legacy_outline = read_text_if_exists(BASE_DIR / "outline.md")
+    legacy_outline = read_text_if_exists(readable_planning_artifact_path("outline", BASE_DIR))
     return derive_thread_registry_from_outline(legacy_outline)
 
 
@@ -102,15 +103,16 @@ def generate_thread_registry(*, output_path: Path = DEFAULT_OUTPUT) -> list[dict
     try:
         if not API_KEY:
             raise RuntimeError("missing API key")
-        arc = read_required(BASE_DIR / "arc_outline.md")
-        chapter_cards = read_required(BASE_DIR / "chapter_cards.md")
-        outline = read_text_if_exists(BASE_DIR / "outline.md")
+        arc = read_required(readable_planning_artifact_path("arc_outline", BASE_DIR))
+        chapter_cards = read_required(readable_planning_artifact_path("chapter_cards", BASE_DIR))
+        outline = read_text_if_exists(readable_planning_artifact_path("outline", BASE_DIR))
         raw = call_writer(build_prompt(arc, chapter_cards, outline))
         threads = normalize_thread_registry(extract_json_object(raw))
     except Exception as exc:
         print(f"WARNING: gen_thread_registry.py falling back to derived thread registry: {exc}", file=sys.stderr)
         threads = derive_threads()
 
+    ensure_parent_dir(output_path)
     output_path.write_text(json.dumps(threads, indent=2) + "\n")
     return threads
 

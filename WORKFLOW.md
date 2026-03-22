@@ -81,14 +81,15 @@ What each phase does:
   available, full evidence-backed eval, manifest, gate
 - `review`: `review.py --output reviews.md`, `review.py --parse`, manifest,
   gate
-- `export`: rebuild `outline.md` and `arc_summary.md`, assemble
+- `export`: rebuild `planning/outline.md` and `arc_summary.md`, assemble
   `manuscript.md`, optional LaTeX/PDF build, manifest, gate
 
 Important runtime detail:
 
 - `gen_world.py`, `gen_characters.py`, and `gen_canon.py` still emit markdown
   to stdout in direct manual use, but `run_pipeline.py` already captures them
-  into `world.md`, `characters.md`, and `canon.md`
+  into `planning/world.md`, `planning/characters.md`, and
+  `planning/canon.md`
 
 ## Option B: Run Targeted Steps Manually
 
@@ -100,14 +101,14 @@ orchestrator.
 ```bash
 uv run python seed.py
 
-uv run python gen_world.py > world.md
-uv run python gen_characters.py --emit-engine > characters.md
+uv run python gen_world.py > planning/world.md
+uv run python gen_characters.py --emit-engine > planning/characters.md
 uv run python gen_perspective.py
 uv run python discover_voice.py --trials 8
 uv run python gen_arc.py
 uv run python gen_chapter_cards.py
 uv run python gen_thread_registry.py
-uv run python gen_canon.py > canon.md
+uv run python gen_canon.py > planning/canon.md
 uv run python gen_outline_part2.py
 uv run python build_manifest.py --phase foundation
 uv run python consistency_gate.py --phase foundation
@@ -116,14 +117,14 @@ uv run python evaluate.py --phase foundation
 
 Source-of-truth planning files at the end of foundation:
 
-- `arc_outline.md`
-- `chapter_cards.md`
-- `thread_registry.json`
+- `planning/arc_outline.md`
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
 - `manifest.json`
 
 Compatibility file:
 
-- `outline.md`
+- `planning/outline.md`
 
 ### Drafting
 
@@ -177,9 +178,11 @@ uv run python evaluate.py --chapter 3 --risk
 How `auto` works:
 
 - `draft_chapter.py --mode auto` switches to the PR3+ path when
-  `perspective.md`, `voice.md`, `character_engine.json`, `chapter_cards.md`,
-  `thread_registry.json`, `world.md`, `canon.md`, and the needed
-  `scene_options` and prior `story_state` files exist
+  `planning/perspective.md`, `planning/voice.md`,
+  `planning/character_engine.json`, `planning/chapter_cards.md`,
+  `planning/thread_registry.json`, `planning/world.md`,
+  `planning/canon.md`, and the needed `scene_options` and prior
+  `story_state` files exist
 - otherwise it falls back to the legacy outline prompt
 
 How `plan_scene.py` works:
@@ -254,9 +257,9 @@ uv run python consistency_gate.py --phase export
 `build_outline.py` and `build_arc_summary.py` now rebuild from accepted
 chapters plus:
 
-- `arc_outline.md`
-- `chapter_cards.md`
-- `thread_registry.json`
+- `planning/arc_outline.md`
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
 - `manifest.json`
 
 They are compatibility and export helpers, not primary planning generators.
@@ -266,16 +269,16 @@ They are compatibility and export helpers, not primary planning generators.
 Treat these as the current story-state truth:
 
 - accepted chapter files in `chapters/`
-- `arc_outline.md`
-- `chapter_cards.md`
-- `thread_registry.json`
+- `planning/arc_outline.md`
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
 - `scene_options/`
 - `state/story_state/`
 - `manifest.json`
 
 Treat these as compatibility or presentation outputs:
 
-- `outline.md`
+- `planning/outline.md`
 - `arc_summary.md`
 - `manuscript.md`
 
@@ -283,7 +286,7 @@ Treat these as compatibility or presentation outputs:
 
 If you were used to the old flow:
 
-- stop treating `outline.md` as the only planning artifact
+- stop treating `planning/outline.md` as the only planning artifact
 - stop treating summary-led full eval as the primary revision loop
 - treat `review` as its own phase between `revision` and `export`
 - use manifest and consistency checks as part of normal workflow, not as

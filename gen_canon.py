@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+from project_paths import readable_planning_artifact_path, require_seed_path
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -37,9 +38,9 @@ def call_writer(prompt, max_tokens=16000):
     resp.raise_for_status()
     return resp.json()["content"][0]["text"]
 
-world = (BASE_DIR / "world.md").read_text()
-characters = (BASE_DIR / "characters.md").read_text()
-seed = (BASE_DIR / "seed.txt").read_text()
+world = readable_planning_artifact_path("world", BASE_DIR).read_text(encoding="utf-8")
+characters = readable_planning_artifact_path("characters", BASE_DIR).read_text(encoding="utf-8")
+seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
 
 prompt = f"""Extract EVERY hard fact from these planning documents into a structured canon database.
 A "hard fact" is anything a writer must not contradict: names, ages, dates, physical descriptions,
@@ -47,7 +48,7 @@ rules of the magic system, geography, relationships, established events.
 
 SOURCE DOCUMENTS:
 
-=== SEED.TXT ===
+=== SEED.MD ===
 {seed}
 
 === WORLD.MD ===

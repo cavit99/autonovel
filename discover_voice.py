@@ -22,6 +22,12 @@ from foundation_mind import (
     render_voice_identity,
     replace_or_bootstrap_voice_part2,
 )
+from project_paths import (
+    ensure_parent_dir,
+    planning_artifact_path,
+    readable_planning_artifact_path,
+    require_seed_path,
+)
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -31,9 +37,9 @@ JUDGE_MODEL = os.environ.get("AUTONOVEL_JUDGE_MODEL", WRITER_MODEL)
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
 
-VOICE_PATH = BASE_DIR / "voice.md"
-PERSPECTIVE_PATH = BASE_DIR / "perspective.md"
-DEFAULT_DISCOVERY_PATH = BASE_DIR / "voice_discovery.json"
+VOICE_PATH = planning_artifact_path("voice", BASE_DIR)
+PERSPECTIVE_PATH = planning_artifact_path("perspective", BASE_DIR)
+DEFAULT_DISCOVERY_PATH = planning_artifact_path("voice_discovery", BASE_DIR)
 
 WRITER_SYSTEM = (
     "You are trying out candidate prose registers for a single fantasy novel. "
@@ -189,7 +195,7 @@ def trial_total(score: dict) -> float:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Discover the novel's voice through trial passages")
     parser.add_argument("--trials", type=int, default=5, help="Number of trial registers to generate (5-8)")
-    parser.add_argument("--voice-output", type=Path, default=VOICE_PATH, help="Path to voice.md")
+    parser.add_argument("--voice-output", type=Path, default=VOICE_PATH, help="Path to voice markdown")
     parser.add_argument(
         "--discovery-output",
         type=Path,
@@ -203,10 +209,10 @@ def main() -> None:
         sys.exit(1)
 
     registers = available_registers(args.trials)
-    seed = read_required(BASE_DIR / "seed.txt")
-    world = read_required(BASE_DIR / "world.md")
-    characters = read_required(BASE_DIR / "characters.md")
-    perspective = read_required(PERSPECTIVE_PATH)
+    seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
+    world = read_required(readable_planning_artifact_path("world", BASE_DIR))
+    characters = read_required(readable_planning_artifact_path("characters", BASE_DIR))
+    perspective = read_required(readable_planning_artifact_path("perspective", BASE_DIR))
     voice_text = args.voice_output.read_text() if args.voice_output.exists() else None
 
     trials = []
@@ -264,6 +270,7 @@ def main() -> None:
 
     rendered_part2 = render_voice_identity(profile)
     updated_voice = replace_or_bootstrap_voice_part2(voice_text, rendered_part2)
+    ensure_parent_dir(args.voice_output)
     args.voice_output.write_text(updated_voice)
 
     discovery = {
@@ -275,6 +282,7 @@ def main() -> None:
         "winner": winner["name"],
         "voice_profile": profile,
     }
+    ensure_parent_dir(args.discovery_output)
     args.discovery_output.write_text(json.dumps(discovery, indent=2) + "\n")
 
     print(f"Saved updated voice profile to {args.voice_output}", file=sys.stderr)

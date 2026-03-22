@@ -10,6 +10,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from project_paths import readable_planning_artifact_path
+
 BASE_DIR = Path(__file__).resolve().parent
 CHAPTERS_DIR = BASE_DIR / "chapters"
 EVAL_LOG_DIR = BASE_DIR / "eval_logs"
@@ -83,7 +85,7 @@ def load_all_chapters(chapters_dir: Path = CHAPTERS_DIR) -> dict[int, str]:
 
 
 def load_character_engine(path: Path | None = None) -> dict[str, Any]:
-    engine_path = path or (BASE_DIR / "character_engine.json")
+    engine_path = path or readable_planning_artifact_path("character_engine", BASE_DIR)
     if not engine_path.exists():
         return {}
     try:

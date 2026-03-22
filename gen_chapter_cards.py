@@ -22,6 +22,12 @@ from planning_split import (
     read_text_if_exists,
     render_chapter_cards,
 )
+from project_paths import (
+    ensure_parent_dir,
+    planning_artifact_path,
+    readable_planning_artifact_path,
+    require_seed_path,
+)
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -29,7 +35,7 @@ load_dotenv(BASE_DIR / ".env")
 WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
-DEFAULT_OUTPUT = BASE_DIR / "chapter_cards.md"
+DEFAULT_OUTPUT = planning_artifact_path("chapter_cards", BASE_DIR)
 
 SYSTEM_PROMPT = (
     "You convert novel planning materials into chapter cards. "
@@ -114,7 +120,7 @@ Rules:
 
 
 def derive_cards() -> list[dict[str, object]]:
-    legacy_outline = read_text_if_exists(BASE_DIR / "outline.md")
+    legacy_outline = read_text_if_exists(readable_planning_artifact_path("outline", BASE_DIR))
     return derive_chapter_cards_from_outline(legacy_outline)
 
 
@@ -122,18 +128,19 @@ def generate_chapter_cards(*, output_path: Path = DEFAULT_OUTPUT) -> list[dict[s
     try:
         if not API_KEY:
             raise RuntimeError("missing API key")
-        seed = read_required(BASE_DIR / "seed.txt")
-        world = read_required(BASE_DIR / "world.md")
-        characters = read_required(BASE_DIR / "characters.md")
-        perspective = read_required(BASE_DIR / "perspective.md")
-        voice = read_required(BASE_DIR / "voice.md")
-        arc = read_required(BASE_DIR / "arc_outline.md")
+        seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
+        world = read_required(readable_planning_artifact_path("world", BASE_DIR))
+        characters = read_required(readable_planning_artifact_path("characters", BASE_DIR))
+        perspective = read_required(readable_planning_artifact_path("perspective", BASE_DIR))
+        voice = read_required(readable_planning_artifact_path("voice", BASE_DIR))
+        arc = read_required(readable_planning_artifact_path("arc_outline", BASE_DIR))
         raw = call_writer(build_prompt(seed, world, characters, perspective, voice, arc))
         cards = normalize_chapter_cards(extract_json_object(raw))
     except Exception as exc:
         print(f"WARNING: gen_chapter_cards.py falling back to derived chapter cards: {exc}", file=sys.stderr)
         cards = derive_cards()
 
+    ensure_parent_dir(output_path)
     output_path.write_text(render_chapter_cards(cards) + "\n")
     return cards
 

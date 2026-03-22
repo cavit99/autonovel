@@ -58,10 +58,12 @@ class GenericSeedSupportTests(unittest.TestCase):
     def test_legacy_prompt_uses_neutral_reference_and_generic_viewpoint_language(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            (root / "voice.md").write_text("# Voice\n", encoding="utf-8")
-            (root / "world.md").write_text("# World\n", encoding="utf-8")
-            (root / "characters.md").write_text("# Characters\n", encoding="utf-8")
-            (root / "outline.md").write_text(
+            planning = root / "planning"
+            planning.mkdir()
+            (planning / "voice.md").write_text("# Voice\n", encoding="utf-8")
+            (planning / "world.md").write_text("# World\n", encoding="utf-8")
+            (planning / "characters.md").write_text("# Characters\n", encoding="utf-8")
+            (planning / "outline.md").write_text(
                 "### Ch 1: Signals\n\n1. Beat one.\n\n### Ch 2: Echoes\n\n1. Beat two.\n",
                 encoding="utf-8",
             )
@@ -128,22 +130,25 @@ class GenericSeedSupportTests(unittest.TestCase):
             for path in (chapters_dir, variants_dir, briefs_dir, scene_options_dir, story_state_dir, edit_logs_dir, eval_logs_dir):
                 path.mkdir(parents=True, exist_ok=True)
 
-            (root / "seed.txt").write_text("A new seed\n", encoding="utf-8")
+            planning = root / "planning"
+            planning.mkdir()
+            (root / "seed.md").write_text("A new seed\n", encoding="utf-8")
+            (root / "seed.txt").write_text("Legacy seed\n", encoding="utf-8")
             (briefs_dir / "example.md").write_text("# Example\n", encoding="utf-8")
             (chapters_dir / ".gitkeep").write_text("", encoding="utf-8")
 
             for path in (
-                root / "world.md",
-                root / "characters.md",
-                root / "character_engine.json",
-                root / "perspective.md",
-                root / "voice.md",
-                root / "voice_discovery.json",
-                root / "arc_outline.md",
-                root / "chapter_cards.md",
-                root / "thread_registry.json",
-                root / "outline.md",
-                root / "canon.md",
+                planning / "world.md",
+                planning / "characters.md",
+                planning / "character_engine.json",
+                planning / "perspective.md",
+                planning / "voice.md",
+                planning / "voice_discovery.json",
+                planning / "arc_outline.md",
+                planning / "chapter_cards.md",
+                planning / "thread_registry.json",
+                planning / "outline.md",
+                planning / "canon.md",
                 root / "manifest.json",
                 root / "results.tsv",
                 root / "arc_summary.md",
@@ -173,10 +178,11 @@ class GenericSeedSupportTests(unittest.TestCase):
             ):
                 removed = run_pipeline.clear_from_scratch_artifacts()
                 self.assertTrue(removed)
+                self.assertTrue((root / "seed.md").exists())
                 self.assertTrue((root / "seed.txt").exists())
                 self.assertTrue((briefs_dir / "example.md").exists())
                 self.assertTrue((chapters_dir / ".gitkeep").exists())
-                self.assertFalse((root / "world.md").exists())
+                self.assertFalse((planning / "world.md").exists())
                 self.assertFalse((root / "manifest.json").exists())
                 self.assertFalse((chapters_dir / "ch_01.md").exists())
                 self.assertFalse((variants_dir / "ch_01_variant_01.md").exists())

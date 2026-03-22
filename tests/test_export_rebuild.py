@@ -13,6 +13,8 @@ class ExportRebuildTests(unittest.TestCase):
     def test_outline_rebuild_uses_live_counts_and_current_artifacts(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
             (root / "chapters").mkdir()
             write_chapter(
                 root / "chapters" / "ch_01.md",
@@ -24,7 +26,7 @@ class ExportRebuildTests(unittest.TestCase):
                 "Second Bell",
                 "Perin refuses the easy answer.\n\nCass decides the bell has been asking consent all along.",
             )
-            (root / "arc_outline.md").write_text(
+            (planning / "arc_outline.md").write_text(
                 "# Arc Outline\n\n"
                 "**Working title:** Bells\n\n"
                 "## Irreversible Turns\n"
@@ -38,7 +40,7 @@ class ExportRebuildTests(unittest.TestCase):
                 "2\n",
                 encoding="utf-8",
             )
-            (root / "chapter_cards.md").write_text(
+            (planning / "chapter_cards.md").write_text(
                 "# Chapter Cards\n\n"
                 "## Ch 01: Signals\n"
                 "goal: Learn why the bell hurts\n"
@@ -66,7 +68,7 @@ class ExportRebuildTests(unittest.TestCase):
                 "risk: formal\n",
                 encoding="utf-8",
             )
-            (root / "thread_registry.json").write_text(
+            (planning / "thread_registry.json").write_text(
                 "[\n"
                 '  {"id": "consent", "description": "The bell asks for consent", "type": "plot", "first_seen": 1, "reinforced": [2], "payoff": 2, "required": true},\n'
                 '  {"id": "shame", "description": "Cass hides the pain", "type": "pressure", "first_seen": 1, "reinforced": [], "payoff": 0, "required": false}\n'
@@ -98,13 +100,15 @@ class ExportRebuildTests(unittest.TestCase):
     def test_arc_summary_rebuild_uses_accepted_prose_and_thread_registry(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
             (root / "chapters").mkdir()
             write_chapter(
                 root / "chapters" / "ch_01.md",
                 "Glass Choir",
                 "The choir glass rattles when the contract is sung.\n\nCass thinks the answer is trapped in the metal.",
             )
-            (root / "arc_outline.md").write_text(
+            (planning / "arc_outline.md").write_text(
                 "# Arc Outline\n\n"
                 "**Working title:** Glass Choir\n\n"
                 "## Irreversible Turns\n"
@@ -118,7 +122,7 @@ class ExportRebuildTests(unittest.TestCase):
                 "1\n",
                 encoding="utf-8",
             )
-            (root / "chapter_cards.md").write_text(
+            (planning / "chapter_cards.md").write_text(
                 "# Chapter Cards\n\n"
                 "## Ch 01: Glass Choir\n"
                 "goal: Understand the sound inside the contract\n"
@@ -134,7 +138,7 @@ class ExportRebuildTests(unittest.TestCase):
                 "risk: formal\n",
                 encoding="utf-8",
             )
-            (root / "thread_registry.json").write_text(
+            (planning / "thread_registry.json").write_text(
                 "[\n"
                 '  {"id": "answer", "description": "The bell answers the contract", "type": "plot", "first_seen": 1, "reinforced": [], "payoff": 0, "required": true}\n'
                 "]\n",
@@ -165,12 +169,14 @@ class ExportRebuildTests(unittest.TestCase):
     def test_outline_rebuild_prefers_live_phase_over_stale_manifest_phase(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
             (root / "chapters").mkdir()
-            (root / "arc_outline.md").write_text(
+            (planning / "arc_outline.md").write_text(
                 "# Arc Outline\n\n**Working title:** Bells\n",
                 encoding="utf-8",
             )
-            (root / "chapter_cards.md").write_text(
+            (planning / "chapter_cards.md").write_text(
                 "# Chapter Cards\n\n"
                 "## Ch 01: One\n"
                 "goal: Test\n"
@@ -186,7 +192,7 @@ class ExportRebuildTests(unittest.TestCase):
                 "risk: none\n",
                 encoding="utf-8",
             )
-            (root / "thread_registry.json").write_text("[]\n", encoding="utf-8")
+            (planning / "thread_registry.json").write_text("[]\n", encoding="utf-8")
             (root / "manifest.json").write_text(
                 "{\n"
                 '  "title": "Bells",\n'

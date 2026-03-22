@@ -14,9 +14,10 @@ from planning_split import (
     parse_chapter_cards,
     render_legacy_outline,
 )
+from project_paths import ensure_parent_dir, planning_artifact_path
 
 BASE_DIR = Path(__file__).parent
-DEFAULT_OUTPUT = BASE_DIR / "outline.md"
+DEFAULT_OUTPUT = planning_artifact_path("outline", BASE_DIR)
 
 
 def generate_arc(*, output_path: Path) -> dict[str, object]:
@@ -42,17 +43,17 @@ def build_parser() -> argparse.ArgumentParser:
         description="Compatibility wrapper for the legacy outline.md pipeline"
     )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Where to write outline.md")
-    parser.add_argument("--arc-output", type=Path, default=BASE_DIR / "arc_outline.md", help="Arc output path")
+    parser.add_argument("--arc-output", type=Path, default=planning_artifact_path("arc_outline", BASE_DIR), help="Arc output path")
     parser.add_argument(
         "--cards-output",
         type=Path,
-        default=BASE_DIR / "chapter_cards.md",
+        default=planning_artifact_path("chapter_cards", BASE_DIR),
         help="Chapter cards output path",
     )
     parser.add_argument(
         "--threads-output",
         type=Path,
-        default=BASE_DIR / "thread_registry.json",
+        default=planning_artifact_path("thread_registry", BASE_DIR),
         help="Thread registry output path",
     )
     parser.add_argument(
@@ -107,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
 
     title = arc.get("title", "Outline")
     outline = render_legacy_outline(title, arc, cards, threads)
+    ensure_parent_dir(args.output)
     args.output.write_text(outline + "\n")
     print(f"Saved legacy outline to {args.output}", file=sys.stderr)
     print(outline)

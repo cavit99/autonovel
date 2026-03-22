@@ -14,11 +14,14 @@ class OrchestratorManifestTests(unittest.TestCase):
     def test_build_manifest_payload_collects_counts_and_risk_chapters(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
             (root / "chapters").mkdir()
             (root / "eval_logs").mkdir()
             (root / "edit_logs").mkdir()
             (root / "chapters" / "ch_01.md").write_text("# Ch 1\n\nOne two three.\n", encoding="utf-8")
-            (root / "chapter_cards.md").write_text(
+            (root / "seed.md").write_text("A seed\n", encoding="utf-8")
+            (planning / "chapter_cards.md").write_text(
                 "# Chapter Cards\n\n"
                 "## Ch 01: Signals\n"
                 "goal: Test\npressure: Pressure\nreversal: Reversal\naftermath: Aftermath\n"
@@ -27,8 +30,8 @@ class OrchestratorManifestTests(unittest.TestCase):
                 "scene_method: dialogue_driven\nrisk: formal\n",
                 encoding="utf-8",
             )
-            (root / "thread_registry.json").write_text("[]\n", encoding="utf-8")
-            (root / "arc_outline.md").write_text(
+            (planning / "thread_registry.json").write_text("[]\n", encoding="utf-8")
+            (planning / "arc_outline.md").write_text(
                 "# Arc Outline\n\n**Working title:** Signals\n\n## Candidate Risk Chapters\n1\n",
                 encoding="utf-8",
             )
@@ -41,15 +44,20 @@ class OrchestratorManifestTests(unittest.TestCase):
         self.assertEqual(manifest["word_count"], 6)
         self.assertEqual(manifest["risk_chapters"], [1])
         self.assertEqual(manifest["phase"], "drafting")
+        self.assertEqual(manifest["files"]["seed"], "seed.md")
+        self.assertEqual(manifest["files"]["chapter_cards"], "planning/chapter_cards.md")
+        self.assertIn("seed", manifest["hashes"])
 
     def test_consistency_gate_catches_evidence_hash_mismatch(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
             (root / "chapters").mkdir()
             (root / "eval_logs").mkdir()
             (root / "edit_logs").mkdir()
             (root / "chapters" / "ch_01.md").write_text("# Ch 1\n\nAlpha beta gamma.\n", encoding="utf-8")
-            (root / "chapter_cards.md").write_text(
+            (planning / "chapter_cards.md").write_text(
                 "# Chapter Cards\n\n"
                 "## Ch 01: Signals\n"
                 "goal: Test\npressure: Pressure\nreversal: Reversal\naftermath: Aftermath\n"
@@ -58,7 +66,7 @@ class OrchestratorManifestTests(unittest.TestCase):
                 "scene_method: dialogue_driven\nrisk: none\n",
                 encoding="utf-8",
             )
-            (root / "thread_registry.json").write_text("[]\n", encoding="utf-8")
+            (planning / "thread_registry.json").write_text("[]\n", encoding="utf-8")
             (root / "edit_logs" / "reader_panel.json").write_text("{}\n", encoding="utf-8")
             (root / "edit_logs" / "humanity_panel.json").write_text("{}\n", encoding="utf-8")
             (root / "edit_logs" / "dialogue_audit.json").write_text("{}\n", encoding="utf-8")
@@ -102,6 +110,8 @@ class OrchestratorManifestTests(unittest.TestCase):
     def test_foundation_smoke_uses_pr6_generation_order(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
             (root / "edit_logs").mkdir()
 
             commands = []
@@ -112,7 +122,7 @@ class OrchestratorManifestTests(unittest.TestCase):
                     output_path.write_text("# World\n", encoding="utf-8")
                 elif script == "gen_characters.py --emit-engine":
                     output_path.write_text("# Characters\n", encoding="utf-8")
-                    (root / "character_engine.json").write_text("{}\n", encoding="utf-8")
+                    (planning / "character_engine.json").write_text("{}\n", encoding="utf-8")
                 elif script == "gen_canon.py":
                     output_path.write_text("# Canon\n", encoding="utf-8")
                 return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
@@ -120,14 +130,14 @@ class OrchestratorManifestTests(unittest.TestCase):
             def fake_uv_run(script, timeout=600, check=False):
                 commands.append(script)
                 if script == "gen_perspective.py":
-                    (root / "perspective.md").write_text("# Perspective\n", encoding="utf-8")
+                    (planning / "perspective.md").write_text("# Perspective\n", encoding="utf-8")
                 elif script.startswith("discover_voice.py"):
-                    (root / "voice.md").write_text("# Voice\n", encoding="utf-8")
-                    (root / "voice_discovery.json").write_text("{}\n", encoding="utf-8")
+                    (planning / "voice.md").write_text("# Voice\n", encoding="utf-8")
+                    (planning / "voice_discovery.json").write_text("{}\n", encoding="utf-8")
                 elif script == "gen_arc.py":
-                    (root / "arc_outline.md").write_text("# Arc Outline\n", encoding="utf-8")
+                    (planning / "arc_outline.md").write_text("# Arc Outline\n", encoding="utf-8")
                 elif script == "gen_chapter_cards.py":
-                    (root / "chapter_cards.md").write_text(
+                    (planning / "chapter_cards.md").write_text(
                         "# Chapter Cards\n\n"
                         "## Ch 01: One\n"
                         "goal: Goal\npressure: Pressure\nreversal: Reversal\naftermath: Aftermath\n"
@@ -137,9 +147,9 @@ class OrchestratorManifestTests(unittest.TestCase):
                         encoding="utf-8",
                     )
                 elif script == "gen_thread_registry.py":
-                    (root / "thread_registry.json").write_text("[]\n", encoding="utf-8")
+                    (planning / "thread_registry.json").write_text("[]\n", encoding="utf-8")
                 elif script == "gen_outline_part2.py":
-                    (root / "outline.md").write_text(
+                    (planning / "outline.md").write_text(
                         "### Ch 1: One\n\n- BEATS:\n- Something happens.\n\n## Foreshadowing Ledger\n- none\n",
                         encoding="utf-8",
                     )
