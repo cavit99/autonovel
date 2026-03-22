@@ -6,6 +6,7 @@ from foundation_mind import (
     extract_json_object,
     normalize_character_engine,
     render_perspective_markdown,
+    replace_or_bootstrap_voice_part2,
     replace_voice_part2,
 )
 
@@ -56,6 +57,13 @@ class FoundationMindTests(unittest.TestCase):
         self.assertIn("Guardrails stay.", updated)
         self.assertIn("### Tone\nNew body.", updated)
         self.assertNotIn("Old body.", updated)
+
+    def test_replace_or_bootstrap_voice_part2_creates_default_voice_document(self):
+        bootstrapped = replace_or_bootstrap_voice_part2(None, "### Tone\nNew body.")
+
+        self.assertTrue(bootstrapped.startswith("# Voice Profile"))
+        self.assertIn("## Part 1: Guardrails (permanent, all novels)", bootstrapped)
+        self.assertIn(f"{VOICE_PART2_HEADING}\n\n### Tone\nNew body.", bootstrapped)
 
     def test_extract_json_object_handles_fenced_payload(self):
         payload = """```json

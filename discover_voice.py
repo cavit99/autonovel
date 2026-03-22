@@ -16,7 +16,7 @@ from foundation_mind import (
     extract_json_object,
     normalize_voice_profile,
     render_voice_identity,
-    replace_voice_part2,
+    replace_or_bootstrap_voice_part2,
 )
 
 BASE_DIR = Path(__file__).parent
@@ -203,7 +203,7 @@ def main() -> None:
     world = read_required(BASE_DIR / "world.md")
     characters = read_required(BASE_DIR / "characters.md")
     perspective = read_required(PERSPECTIVE_PATH)
-    voice_text = read_required(args.voice_output)
+    voice_text = args.voice_output.read_text() if args.voice_output.exists() else None
 
     trials = []
     for register in registers:
@@ -259,7 +259,7 @@ def main() -> None:
     )
 
     rendered_part2 = render_voice_identity(profile)
-    updated_voice = replace_voice_part2(voice_text, rendered_part2)
+    updated_voice = replace_or_bootstrap_voice_part2(voice_text, rendered_part2)
     args.voice_output.write_text(updated_voice)
 
     discovery = {
