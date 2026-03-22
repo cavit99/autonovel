@@ -18,7 +18,13 @@ import re
 import argparse
 from pathlib import Path
 from datetime import datetime
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test runners
+    def load_dotenv(*_args, **_kwargs):
+        return False
+
+from project_paths import readable_planning_artifact_path
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env", override=True)
@@ -32,6 +38,13 @@ CHAPTERS_DIR = BASE_DIR / "chapters"
 LOGS_DIR = BASE_DIR / "edit_logs"
 
 REVIEW_PROMPT = """Read the below novel, "{title}". Review it first as a literary critic (like a newspaper book review) and then as a professor of fiction. In the later review, give specific, actionable suggestions for any defects you find. Be fair but honest. You don't *have* to find defects.
+
+In the professor section, explicitly address:
+- where the novel feels overdesigned or too fully on-theme
+- where the governing perspective is strongest and weakest
+- where characters sound too aware of the novel's argument
+- whether any risk chapters are interesting or merely defective
+- where the prose's formal behavior does or does not enact the material
 
 {manuscript}"""
 
@@ -62,7 +75,7 @@ def call_opus(prompt, max_tokens=8000):
 
 def get_title():
     """Extract novel title from first chapter or outline."""
-    outline = BASE_DIR / "outline.md"
+    outline = readable_planning_artifact_path("outline", BASE_DIR)
     if outline.exists():
         first_line = outline.read_text().split("\n")[0]
         title = first_line.lstrip("# ").strip()
@@ -144,8 +157,25 @@ def parse_review(review_text):
             fix_type = "mechanical"
         elif any(w in text_lower for w in ['restructur', 'rearrang', 'move', 'reorganiz']):
             fix_type = "structural"
+        elif any(w in text_lower for w in ['perspective', 'blind spot', 'governing mind']):
+            fix_type = "perspective"
+        elif any(w in text_lower for w in ['formal enactment', 'syntax', 'rhythm', 'shape of the prose']):
+            fix_type = "formal"
+        elif any(w in text_lower for w in ['risk chapter', 'ambition', 'defective']):
+            fix_type = "risk"
         else:
             fix_type = "revision"
+
+        focus_tags = []
+        for tag, keywords in {
+            "overdesigned": ['overdesigned', 'too on-theme', 'too fully on-theme'],
+            "perspective": ['perspective', 'blind spot', 'governing mind'],
+            "formal_enactment": ['formal enactment', 'syntax', 'rhythm', 'shape'],
+            "risk": ['risk chapter', 'ambition', 'defective'],
+            "character_argument": ['too aware of the novel', 'too aware of the argument'],
+        }.items():
+            if any(keyword in text_lower for keyword in keywords):
+                focus_tags.append(tag)
         
         # Check if this is qualified/hedged (diminishing returns signal)
         qualified = any(phrase in text_lower for phrase in [
@@ -166,6 +196,7 @@ def parse_review(review_text):
             "title": title,
             "severity": severity,
             "type": fix_type,
+            "focus_tags": focus_tags,
             "qualified": qualified,
             "suggestion": suggestion,
             "full_text": section.strip()[:1000],
@@ -278,14 +309,13 @@ def main():
     parser.add_argument("--parse", action="store_true", help="Parse most recent review")
     
     args = parser.parse_args()
-    
-    if not API_KEY:
-        print("ERROR: ANTHROPIC_API_KEY not set in .env", file=sys.stderr)
-        sys.exit(1)
-    
+
     if args.parse:
         cmd_parse(args)
     else:
+        if not API_KEY:
+            print("ERROR: ANTHROPIC_API_KEY not set in .env", file=sys.stderr)
+            sys.exit(1)
         cmd_review(args)
 
 

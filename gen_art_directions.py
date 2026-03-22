@@ -9,6 +9,8 @@ import re
 from pathlib import Path
 from dotenv import load_dotenv
 
+from project_paths import readable_planning_artifact_path
+
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env", override=True)
 
@@ -153,8 +155,9 @@ if __name__ == "__main__":
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 6
     
     world = ""
-    if (BASE_DIR / "world.md").exists():
-        world = (BASE_DIR / "world.md").read_text()[:3000]
+    world_path = readable_planning_artifact_path("world", BASE_DIR)
+    if world_path.exists():
+        world = world_path.read_text()[:3000]
     
     directions = generate_directions(art_type, style, n, world)
     for i, d in enumerate(directions, 1):

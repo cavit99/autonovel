@@ -1,25 +1,41 @@
 #!/usr/bin/env python3
 """
 4-reader panel for full-arc novel evaluation.
-Each reader has a distinct persona and evaluates the NOVEL, not chapters.
-The disagreements between readers are where editorial decisions live.
 
-Usage: python reader_panel.py
+Usage:
+  python reader_panel.py
+  python reader_panel.py --evidence eval_logs/evidence_pack.json
 """
-import os
-import sys
-import json
-import re
-from pathlib import Path
-from datetime import datetime
-from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).parent
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from datetime import datetime
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test runners
+    def load_dotenv(*_args, **_kwargs):
+        return False
+
+from anthropic_api import message_text_from_response, text_block
+from evidence_tools import BASE_DIR, EDIT_LOG_DIR, load_all_chapters, load_json, render_evidence_pack
+
 load_dotenv(BASE_DIR / ".env")
 
 JUDGE_MODEL = os.environ.get("AUTONOVEL_JUDGE_MODEL", "claude-opus-4-6")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+ANTHROPIC_BETA = "context-1m-2025-08-07"
+PANEL_SYSTEM_PROMPT = (
+    "You are part of a multi-reader novel evaluation panel. "
+    "Follow the reading lens in the final user content block. Return valid JSON only."
+)
 
 READERS = {
     "editor": {
@@ -28,10 +44,6 @@ READERS = {
             "You are a senior fiction editor at a major publishing house. "
             "You've edited 200+ novels. You care about prose texture, subtext, "
             "sentence-level craft, and whether the voice is consistent and earned. "
-            "You notice when the narrator over-explains, when dialogue sounds "
-            "written rather than spoken, when a metaphor is borrowed rather than "
-            "earned. You are not cruel but you are precise. You've seen enough "
-            "competent prose to know the difference between good and alive. "
             "You respond with valid JSON only."
         ),
     },
@@ -39,206 +51,252 @@ READERS = {
         "name": "The Genre Reader",
         "system": (
             "You are an avid fantasy reader who reads 50+ novels a year. "
-            "You care about pacing, mystery, worldbuilding payoff, and whether "
-            "you want to keep turning pages. You get bored by beautiful prose "
-            "that doesn't GO anywhere. You notice when an investigation stalls, "
-            "when tension plateaus, when the author is more in love with their "
-            "world than their story. You compare everything to Sanderson, Le Guin, "
-            "Jemisin, Rothfuss, Hobb. You are generous with what you love and "
-            "blunt about what bores you. You respond with valid JSON only."
+            "You care about pacing, payoff, momentum, and whether the book earns continued attention. "
+            "You respond with valid JSON only."
         ),
     },
     "writer": {
         "name": "The Writer",
         "system": (
-            "You are a published fantasy author with 5 novels and a Hugo nomination. "
-            "You read as a craftsperson. You notice structure: where the beats fall, "
-            "whether foreshadowing pays off, whether character arcs complete. You "
-            "notice when technique shows versus when it disappears into the story. "
-            "The highest compliment you give is 'I forgot I was reading.' The worst "
-            "thing you can say is 'I can see the outline.' You care about the gap "
-            "between what a novel attempts and what it achieves. You respond with "
-            "valid JSON only."
+            "You are a published fantasy novelist reading for structure, scene method, and the gap "
+            "between ambition and achieved effect. You respond with valid JSON only."
         ),
     },
     "first_reader": {
         "name": "The First Reader",
         "system": (
-            "You are a thoughtful general reader. Not a writer, not an editor, "
-            "not a genre expert. You read for the experience. You know what you "
-            "feel but not always why. You notice when you're moved, when you're "
-            "bored, when you're confused, when you want to tell someone about "
-            "what you just read. You don't use craft terminology. You say things "
-            "like 'I didn't care about this part' and 'I had to put the book down "
-            "after this scene because I needed a minute.' Your feedback is emotional "
-            "and honest, not analytical. You respond with valid JSON only."
+            "You are a thoughtful general reader responding emotionally rather than analytically. "
+            "You respond with valid JSON only."
         ),
     },
 }
 
-READER_PROMPT = """You have just read a complete fantasy novel in summary form.
+LEGACY_READER_PROMPT = """You have just read a complete fantasy novel in summary form.
 The summaries include chapter-by-chapter events, opening and closing passages
-from each chapter, and key dialogue. The full novel is 72,422 words across
-24 chapters.
+from each chapter, and key dialogue.
 
 {arc_summary}
 
 Now answer these questions about the NOVEL AS A WHOLE. Be specific.
-Quote passages when you can. Name chapter numbers.
 
 Respond with JSON:
 {{
-  "momentum_loss": "Where does the story lose momentum? Name the specific chapter(s) and what causes the drag. If it never loses momentum, say so and explain why.",
-  
-  "earned_ending": "Does the ending feel earned by everything before it? Does Cass's choice in Ch 22 land? Does the final image in Ch 24 mirror Ch 1 in a way that satisfies? What, if anything, feels unearned?",
-  
-  "cut_candidate": "If the novel had to be 10% shorter (~7,000 words), which chapter or section would you cut first? Why? What would be lost?",
-  
-  "missing_scene": "Is there a scene the novel NEEDS that it doesn't have? A conversation that should happen, a moment that's earned but never delivered, a character who deserves more page time? Be specific about where it would go.",
-  
-  "thinnest_character": "Which character feels thinnest by the end? Who do you want to know more about? Who could be cut without the novel suffering?",
-  
-  "best_scene": "What's the single best scene in the novel? Quote the moment that made you feel something. Why does it work?",
-  
+  "momentum_loss": "Where does the story lose momentum? Name the specific chapter(s) and what causes the drag. If it never loses momentum, say so.",
+  "earned_ending": "Does the ending feel earned by everything before it? What, if anything, feels unearned?",
+  "cut_candidate": "If the novel had to be 10% shorter, which chapter or section would you cut first and why?",
+  "missing_scene": "Is there a scene the novel needs that it doesn't have? Be specific about where it would go.",
+  "thinnest_character": "Which character feels thinnest by the end?",
+  "best_scene": "What's the single best scene in the novel and why?",
   "worst_scene": "What's the single weakest scene? What goes wrong? How would you fix it?",
-  
-  "would_recommend": "Would you recommend this novel? To whom? What would you say about it in one sentence?",
-  
-  "haunts_you": "Is there a line or moment that stays with you after reading? Quote it.",
-  
+  "would_recommend": "Would you recommend this novel? To whom?",
+  "haunts_you": "Is there a line or moment that stays with you after reading?",
   "next_book": "Would you read the author's next book? Why or why not?"
 }}
 """
 
-def call_reader(reader_key, arc_summary):
-    import httpx
-    reader = READERS[reader_key]
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": JUDGE_MODEL,
-        "max_tokens": 4000,
-        "temperature": 0.7,  # Higher temp for personality
-        "system": reader["system"],
-        "messages": [{"role": "user", "content": READER_PROMPT.format(arc_summary=arc_summary)}],
-    }
-    resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    resp.raise_for_status()
-    raw = resp.json()["content"][0]["text"]
-    
-    # Parse JSON
+EVIDENCE_READER_PROMPT = """You have not read a summary. You have read an evidence pack of real passages from the novel.
+Ground your claims in the cited passage ids whenever possible.
+
+{evidence}
+
+Now answer these questions about the NOVEL AS A WHOLE. Be specific. Mention passage ids and chapter numbers when you can.
+
+Respond with JSON:
+{{
+  "momentum_loss": "Where does the story lose momentum? Name the specific chapter(s), passage ids, and what causes the drag.",
+  "earned_ending": "Does the ending feel earned by everything before it? What, if anything, feels unearned?",
+  "cut_candidate": "If the novel had to be shorter, which chapter or section would you cut first and why?",
+  "missing_scene": "Is there a scene the novel needs that it doesn't have? Where would it go?",
+  "thinnest_character": "Which character feels thinnest by the end?",
+  "best_scene": "What's the single best scene in the evidence pack and why?",
+  "worst_scene": "What's the single weakest scene in the evidence pack? What goes wrong?",
+  "would_recommend": "Would you recommend this novel? To whom?",
+  "haunts_you": "Is there a line or moment that stays with you after reading?",
+  "next_book": "Would you read the author's next book? Why or why not?",
+  "evidence_cited": ["list the passage ids you relied on most"]
+}}
+"""
+
+
+def parse_json_blob(raw: str) -> dict:
     raw = raw.strip()
     if raw.startswith("```"):
-        raw = re.sub(r'^```\w*\n?', '', raw)
-        raw = re.sub(r'\n?```$', '', raw)
-    start = raw.find('{')
+        raw = re.sub(r"^```\w*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+    start = raw.find("{")
     if start >= 0:
         depth = 0
         in_string = False
         escape = False
-        for i in range(start, len(raw)):
-            c = raw[i]
-            if escape: escape = False; continue
-            if c == '\\' and in_string: escape = True; continue
-            if c == '"' and not escape: in_string = not in_string; continue
-            if in_string: continue
-            if c == '{': depth += 1
-            elif c == '}':
+        for index in range(start, len(raw)):
+            char = raw[index]
+            if escape:
+                escape = False
+                continue
+            if char == "\\" and in_string:
+                escape = True
+                continue
+            if char == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
                 depth -= 1
                 if depth == 0:
-                    return json.loads(raw[start:i+1], strict=False)
+                    return json.loads(raw[start:index + 1], strict=False)
     return json.loads(raw, strict=False)
 
-def find_disagreements(results):
-    """Find where readers disagree -- that's where the editorial decisions live."""
+
+def build_reader_message_content(prompt: str, reader_system: str) -> list[dict[str, object]]:
+    return [
+        text_block(prompt, cache=True),
+        text_block(f"READING LENS:\n{reader_system}"),
+    ]
+
+
+def build_reader_payload(reader_key: str, prompt: str) -> dict[str, object]:
+    reader = READERS[reader_key]
+    return {
+        "model": JUDGE_MODEL,
+        "max_tokens": 4000,
+        "temperature": 0.7,
+        "system": PANEL_SYSTEM_PROMPT,
+        "messages": [
+            {
+                "role": "user",
+                "content": build_reader_message_content(prompt, reader["system"]),
+            }
+        ],
+    }
+
+
+def call_reader(reader_key: str, prompt: str) -> dict:
+    import httpx
+
+    headers = {
+        "x-api-key": API_KEY,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": ANTHROPIC_BETA,
+        "content-type": "application/json",
+    }
+    payload = build_reader_payload(reader_key, prompt)
+    response = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
+    raw = message_text_from_response(response, context=f"reader_panel request ({reader_key})")
+    return parse_json_blob(raw)
+
+
+def find_disagreements(results: dict) -> list[dict]:
     disagreements = []
-    
     for question in ["momentum_loss", "cut_candidate", "thinnest_character", "worst_scene"]:
-        answers = {k: v.get(question, "") for k, v in results.items()}
-        # Extract chapter numbers mentioned
+        answers = {reader: payload.get(question, "") for reader, payload in results.items()}
         chapters_mentioned = {}
         for reader, answer in answers.items():
-            chs = set(re.findall(r'Ch(?:apter)?\s*(\d+)', answer, re.IGNORECASE))
-            chapters_mentioned[reader] = chs
-        
-        # Find chapters where only some readers flagged an issue
-        all_chs = set()
-        for chs in chapters_mentioned.values():
-            all_chs.update(chs)
-        
-        for ch in all_chs:
-            flagged_by = [r for r, chs in chapters_mentioned.items() if ch in chs]
-            not_flagged = [r for r, chs in chapters_mentioned.items() if ch not in chs]
+            mentions = set(re.findall(r"Ch(?:apter)?\s*(\d+)", str(answer), re.IGNORECASE))
+            chapters_mentioned[reader] = mentions
+
+        all_chapters = set()
+        for mentions in chapters_mentioned.values():
+            all_chapters.update(mentions)
+
+        for chapter in all_chapters:
+            flagged_by = [reader for reader, mentions in chapters_mentioned.items() if chapter in mentions]
+            not_flagged = [reader for reader, mentions in chapters_mentioned.items() if chapter not in mentions]
             if flagged_by and not_flagged:
-                disagreements.append({
-                    "question": question,
-                    "chapter": int(ch),
-                    "flagged_by": flagged_by,
-                    "not_flagged": not_flagged,
-                    "details": {r: answers[r][:200] for r in flagged_by}
-                })
-    
+                disagreements.append(
+                    {
+                        "question": question,
+                        "chapter": int(chapter),
+                        "flagged_by": flagged_by,
+                        "not_flagged": not_flagged,
+                        "details": {reader: str(answers[reader])[:200] for reader in flagged_by},
+                    }
+                )
     return disagreements
 
-def main():
-    arc_summary = (BASE_DIR / "arc_summary.md").read_text()
-    
+
+def build_legacy_prompt() -> str:
+    summary_path = BASE_DIR / "arc_summary.md"
+    if summary_path.exists():
+        arc_summary = summary_path.read_text(encoding="utf-8")
+    else:
+        chapters = load_all_chapters(BASE_DIR / "chapters")
+        if not chapters:
+            raise FileNotFoundError(
+                "arc_summary.md not found and no chapter files are available for legacy panel fallback."
+            )
+        summaries = []
+        for chapter_num in sorted(chapters):
+            text = chapters[chapter_num]
+            head = text[:300].strip()
+            tail = text[-300:].strip() if len(text) > 300 else text.strip()
+            summaries.append(
+                f"Chapter {chapter_num}:\n"
+                f"  Opening: {head}\n"
+                f"  Closing: {tail}"
+            )
+        arc_summary = "\n\n".join(summaries)
+    return LEGACY_READER_PROMPT.format(arc_summary=arc_summary)
+
+
+def build_evidence_prompt(evidence_path: Path) -> str:
+    evidence_pack = load_json(evidence_path)
+    return EVIDENCE_READER_PROMPT.format(evidence=render_evidence_pack(evidence_pack))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the 4-reader novel panel.")
+    parser.add_argument("--evidence", help="Path to an evidence-pack JSON file for prose-based panel mode.")
+    parser.add_argument(
+        "--output",
+        default=str(EDIT_LOG_DIR / "reader_panel.json"),
+        help="Where to write the JSON panel results.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Print the assembled prompt instead of calling the model.")
+    args = parser.parse_args()
+
+    prompt = build_evidence_prompt(Path(args.evidence)) if args.evidence else build_legacy_prompt()
+    mode = "evidence" if args.evidence else "legacy"
+
+    if args.dry_run:
+        print(prompt)
+        return
+
+    if not API_KEY:
+        print("ERROR: ANTHROPIC_API_KEY not set", file=sys.stderr)
+        sys.exit(1)
+
     results = {}
     for reader_key, reader_info in READERS.items():
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print(f"READING: {reader_info['name']}")
-        print(f"{'='*50}")
-        
+        print(f"{'=' * 50}")
         try:
-            result = call_reader(reader_key, arc_summary)
+            result = call_reader(reader_key, prompt)
             results[reader_key] = result
-            
-            # Print highlights
-            print(f"  Momentum loss: {result.get('momentum_loss', '')[:150]}...")
-            print(f"  Best scene: {result.get('best_scene', '')[:150]}...")
-            print(f"  Would recommend: {result.get('would_recommend', '')[:150]}...")
-        except Exception as e:
-            print(f"  ERROR: {e}")
-    
-    # Find disagreements
+            print(f"  Momentum loss: {str(result.get('momentum_loss', ''))[:150]}...")
+            print(f"  Best scene: {str(result.get('best_scene', ''))[:150]}...")
+            print(f"  Would recommend: {str(result.get('would_recommend', ''))[:150]}...")
+        except Exception as exc:
+            print(f"  ERROR: {exc}")
+
     disagreements = find_disagreements(results)
-    
-    # Print consensus and disagreement
-    print(f"\n{'='*60}")
-    print("READER PANEL RESULTS")
-    print(f"{'='*60}")
-    
-    for question in ["momentum_loss", "earned_ending", "cut_candidate", "missing_scene", 
-                      "thinnest_character", "best_scene", "worst_scene", "would_recommend",
-                      "haunts_you", "next_book"]:
-        print(f"\n--- {question.upper()} ---")
-        for reader_key in READERS:
-            if reader_key in results:
-                answer = results[reader_key].get(question, "N/A")
-                print(f"  [{READERS[reader_key]['name']}]: {answer[:300]}")
-    
-    if disagreements:
-        print(f"\n{'='*60}")
-        print("DISAGREEMENTS (editorial decisions needed)")
-        print(f"{'='*60}")
-        for d in disagreements:
-            print(f"\n  {d['question']} -- Ch {d['chapter']}")
-            print(f"    Flagged by: {', '.join(d['flagged_by'])}")
-            print(f"    Not flagged: {', '.join(d['not_flagged'])}")
-    
-    # Save full results
+
     output = {
+        "mode": mode,
+        "evidence_path": args.evidence,
         "readers": results,
         "disagreements": disagreements,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
     }
-    out_path = BASE_DIR / "edit_logs" / "reader_panel.json"
-    with open(out_path, "w") as f:
-        json.dump(output, f, indent=2)
-    print(f"\nSaved to {out_path}")
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(output, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+    print(f"\nSaved to {output_path}")
+
 
 if __name__ == "__main__":
     main()

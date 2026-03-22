@@ -32,6 +32,8 @@ import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
 
+from project_paths import readable_planning_artifact_path
+
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env", override=True)
 
@@ -163,10 +165,10 @@ def get_reference_url(art_type):
 # ============================================================
 
 def cmd_style(args):
-    world = (BASE_DIR / "world.md").read_text()[:5000]
-    voice = (BASE_DIR / "voice.md").read_text()[:3000]
+    world = readable_planning_artifact_path("world", BASE_DIR).read_text()[:5000]
+    voice = readable_planning_artifact_path("voice", BASE_DIR).read_text()[:3000]
     title = "Unknown"
-    outline = BASE_DIR / "outline.md"
+    outline = readable_planning_artifact_path("outline", BASE_DIR)
     if outline.exists():
         title = outline.read_text().split("\n")[0].lstrip("# ").strip()
 
@@ -228,8 +230,9 @@ def cmd_curate(args):
     from gen_art_directions import generate_directions
 
     world = ""
-    if (BASE_DIR / "world.md").exists():
-        world = (BASE_DIR / "world.md").read_text()[:3000]
+    world_path = readable_planning_artifact_path("world", BASE_DIR)
+    if world_path.exists():
+        world = world_path.read_text()[:3000]
 
     print(f"Generating {n} radically different {art_type} directions...")
     directions = generate_directions(art_type, style, n, world)

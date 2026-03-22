@@ -1,214 +1,250 @@
 # autonovel
 
-Autonomous fantasy novel writing pipeline. The agent writes and refines
-a novel across 5 co-evolving layers, guided by automated evaluation.
+Agent operating instructions for the repo in its current state.
+
+This file reflects the runtime after the PR6 orchestrator flip and PR7 export
+alignment.
 
 ## Required Reading
 
-Before ANY writing or evaluation, the agent must internalize:
-  - `voice.md` -- Part 1 (guardrails) is permanent. Part 2 is per-novel.
-  - `CRAFT.md` -- Operationalizable frameworks for plot, character,
-    worldbuilding, foreshadowing, prose quality. This is the education.
-  - `ANTI-SLOP.md` -- Full reference on AI writing tells.
+Before writing or evaluating anything, read:
 
-## The Layer Stack
+- `planning/voice.md`
+- `CRAFT.md`
+- `ANTI-SLOP.md`
+- `planning/perspective.md` when it exists
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
+- the accepted chapter files relevant to the change
 
-```
-  Layer 5:  voice.md          -- HOW we write (style, tone, vocabulary)
-  Layer 4:  world.md          -- WHAT exists (lore, magic, geography, history)
-  Layer 3:  characters.md     -- WHO acts (registry, arcs, relationships)
-  Layer 2:  outline.md        -- WHAT HAPPENS (beats, foreshadowing map)
-  Layer 1:  chapters/ch_NN.md -- THE ACTUAL PROSE (one file per chapter)
-  Cross-cutting: canon.md     -- WHAT IS TRUE (hard facts, consistency DB)
-```
+## Current Artifact Stack
 
-## Setup
-
-1. **Tag the run**: Create branch `autonovel/<tag>` from master.
-2. **Read all layer files** for full context.
-3. **Verify state.json** shows phase=foundation.
-4. **Confirm and go**.
-
-## Phase 1: Foundation (no prose yet)
-
-LOOP until foundation_score > 7.5 AND lore_score > 7.0:
-  1. Run `python evaluate.py --phase=foundation`
-  2. Identify the weakest layer/dimension from the eval output
-  3. Expand or revise that layer's document
-  4. When adding facts to world.md or characters.md, ALSO log them
-     in canon.md as canonical entries
-  5. git commit with description of what changed
-  6. Re-evaluate
-  7. If score improved -> keep. If worse -> git reset --hard HEAD~1, discard.
-  8. Log to results.tsv
-
-Lore priorities (the foundation evaluator weights these at 40%):
-  - Magic system: hard rules, costs, limitations, societal implications
-  - History: timeline that creates PRESENT-DAY TENSIONS, not decoration
-  - Geography/culture: distinct locations, specific customs and taboos
-  - Interconnection: magic affects politics, history explains factions,
-    geography shapes culture. Pulling one thread should move everything.
-  - Iceberg depth: more implied than stated. Hints at deeper systems.
-
-Cross-layer consistency checks on every iteration:
-  - Outline references only lore that exists in world.md
-  - Character arcs align with outline beats
-  - Character abilities match magic system rules
-  - Foreshadowing ledger balances (every plant has a payoff)
-  - Voice exemplars exist and are non-generic
-  - Canon.md is populated with all hard facts from world.md and
-    characters.md
-
-Exit: When foundation_score > 7.5 AND lore_score > 7.0, update
-state.json phase to "drafting".
-
-## Phase 2: First Draft (sequential chapter writing)
-
-FOR each chapter in outline order:
-  LOOP until chapter_score > 6.0 or attempts > 5:
-    1. Load context: voice.md + world.md + characters.md
-       + this chapter's outline entry
-       + previous chapter's last ~1000 words
-       + next chapter's outline (for continuity)
-    2. Write chapters/ch_NN.md
-    3. Run `python evaluate.py --chapter=NN`
-    4. Keep/discard based on score
-    5. If writing reveals a lore gap or inconsistency, log a debt
-       in state.json
-    6. After evaluation, check new_canon_entries in the eval output.
-       Add any new facts established in the chapter to canon.md.
-    7. Log to results.tsv
-    8. git commit
-
-Canon grows during drafting. Every chapter establishes facts (a
-character reveals something, a place is described, an event occurs).
-These get logged in canon.md so future chapters stay consistent.
-
-After all chapters drafted, update state.json phase to "revision".
-
-## Phase 3: Revision (infinite refinement)
-
-LOOP FOREVER:
-  1. Run `python evaluate.py --full`
-  2. Identify weakest point:
-     - Lowest-scoring chapter
-     - Unresolved foreshadowing thread
-     - Consistency violation
-     - Voice deviation
-     - Pacing problem
-     - Pending debt from state.json
-  3. Decide action:
-     a. Revise a weak chapter
-     b. Fix a consistency violation (may touch lore + chapters)
-     c. Strengthen a foreshadowing thread (plant + payoff chapters)
-     d. Refine voice in the most-deviant chapter
-     e. Adjust pacing (split/merge chapters)
-     f. Update planning docs to reflect reality
-  4. Make the change(s)
-  5. git commit
-  6. Re-evaluate affected scope
-  7. Keep/discard
-  8. Log to results.tsv
-
-### Propagation Rules
-
-When a layer changes, check downstream:
-  - voice.md changes    -> re-evaluate ALL chapters for voice adherence
-  - world.md changes    -> check all chapters for lore consistency
-  - characters.md changes -> check affected chapters for dialogue/behavior
-  - outline.md changes  -> re-evaluate affected chapters for beat coverage
-  - chapter changes     -> check foreshadowing ledger, check adjacent chapters
-
-When writing reveals upstream issues, log a debt in state.json:
-```json
-{"trigger": "ch_07: magic system needs teleportation rules",
- "affected": ["world.md", "ch_03.md"],
- "status": "pending"}
+```text
+Layer 8: manifest.json            -- runtime snapshot, counts, hashes, risk chapters
+Layer 7: planning/voice.md        -- style guardrails plus discovered voice
+Layer 6: planning/perspective.md  -- governing consciousness
+Layer 5: planning/world.md        -- world, history, institutions, rules
+Layer 4: planning/characters.md   -- human-readable character registry
+Layer 4b: planning/character_engine.json -- structured contradictions and ceilings
+Layer 3: planning/arc_outline.md  -- irreversible turns, reveals, pressure, risks
+Layer 2: planning/chapter_cards.md -- chapter-by-chapter structural cards
+Layer 2b: planning/thread_registry.json -- plot / pressure / echo / texture
+Layer 1b: scene_options/ch_XX.json -- scene choices for a chapter
+Layer 1a: state/story_state/*.json -- evolving accepted-story state
+Layer 1: chapters/ch_XX.md        -- accepted prose
+Cross-cutting: planning/canon.md  -- hard facts
+Compatibility: planning/outline.md -- legacy/export outline
+Compatibility: arc_summary.md     -- legacy/export arc summary
 ```
 
-## Context Window Strategy
+Source of truth:
 
-ALWAYS loaded (~8k tokens):
-  - voice.md (full)
-  - characters.md (full)
-  - world.md (key rules summary)
-  - outline.md (full)
-  - foreshadowing ledger (full)
+- accepted chapters
+- `planning/arc_outline.md`
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
+- `manifest.json`
 
-PER TASK (~20-30k tokens):
-  - Target chapter(s)
-  - Adjacent chapters (prev + next)
-  - Chapters connected by foreshadowing threads
+Compatibility artifacts:
 
-## Evaluation Dimensions
+- `planning/outline.md`
+- `arc_summary.md`
 
-Foundation: world_depth, character_depth, outline_completeness,
-  foreshadowing_balance, internal_consistency
+## Automated Pipeline Truth
 
-Chapter: voice_adherence, beat_coverage, character_voice,
-  plants_seeded, prose_quality, continuity
+The active phase order is:
 
-Full novel: all above + arc_completion, pacing_curve,
-  theme_coherence, foreshadowing_resolution, overall_engagement
+1. `foundation`
+2. `drafting`
+3. `revision`
+4. `review`
+5. `export`
 
-## The Stability Trap (CRITICAL)
+Do not describe `run_pipeline.py` as legacy-only. The orchestrator now drives
+the new architecture, including manifest updates, consistency gates,
+evidence-backed revision, and a separate review phase.
 
-AI's worst tendency is FAVOURING STABILITY OVER CHANGE. This kills
-fiction. Actively fight it at every phase:
+## Foundation Rules
 
-- Characters must end TRULY different from how they began.
-- Let bad things stay bad. Not everything gets fixed.
-- Allow irreversible decisions and irreversible loss.
-- Withhold information from the reader. Maintain mystery.
-- Create genuine moral ambiguity. The "right" choice should be unclear.
-- Vary emotional intensity: quiet/explosive/dread/relief/wonder/horror.
-- If a choice has no real cost, it's not a real choice.
-- Conflicts should NOT resolve too quickly or too cleanly.
-- Resist the urge to round off sharp edges into something safer.
+When building manually, foundation now has a bootstrap stage and a separate
+structural planning stage.
 
-## Foundation Phase: Voice Discovery
+Bootstrap:
 
-During foundation, the agent must DISCOVER the voice for this novel:
-1. Read the world concept and initial ideas
-2. Write 5 trial passages in different registers (mythic, spare,
-   warm, cold, whimsical, etc.)
-3. Evaluate which register best serves THIS story's world and tone
-4. Select the best, refine it, write exemplar and anti-exemplar passages
-5. Fill in voice.md Part 2 with the discovered voice
+1. `gen_world.py > planning/world.md`
+2. `gen_characters.py --emit-engine > planning/characters.md`
+3. `gen_perspective.py`
+4. `discover_voice.py --trials 8`
+5. `gen_canon.py > planning/canon.md`
+6. stop for human review and approval
 
-The voice should feel like it BELONGS in the world (Le Guin's insight:
-in fantasy, the language creates the world, not just describes it).
+After approval:
 
-## Foundation Phase: Character Framework
+1. `gen_arc.py`
+2. `gen_chapter_cards.py`
+3. `gen_thread_registry.py`
+4. `gen_outline_part2.py`
+5. `build_manifest.py --phase foundation`
+6. `consistency_gate.py --phase foundation`
+7. `voice_fingerprint.py`
+8. `evaluate.py --phase foundation`
 
-Every POV character must have documented before drafting begins:
-- Wound/Want/Need/Lie chain (see CRAFT.md)
-- Three-slider profile (proactivity, likability, competence)
-- Arc type (positive, negative, or flat)
-- Speech pattern distinct from every other character
-- At least one secret the reader doesn't learn immediately
+Important:
 
-## Foundation Phase: Plot Framework
+- `discover_voice.py` is the voice discovery mechanism
+- `voice_fingerprint.py` is telemetry, not the source of voice
+- `gen_outline.py` and `gen_outline_part2.py` are compatibility wrappers
+- `planning/outline.md` is not the planning source of truth
 
-The outline must demonstrate:
-- Save the Cat beats at roughly correct percentage marks
-- Try-fail cycle types planned for each chapter (yes-but / no-and)
-- Foreshadowing ledger with every plant and its planned payoff
-- MICE threads identified and planned to close in reverse order
-- Escalating stakes through Act 2
+## Drafting Rules
+
+For chapter `N`:
+
+1. ensure the previous accepted chapter, if any, has a story state file:
+   `advance_state.py --chapter N-1`
+2. generate `scene_options/ch_NN.json` with `plan_scene.py N --variants 4`
+3. draft with `draft_chapter.py N --mode auto`
+4. evaluate the chapter
+5. for risky, critical, or weak chapters, consider `draft_variant.py` and
+   `compare_variants.py`
+6. if accepted, write `state/story_state/ch_NN.json` with
+   `advance_state.py --chapter N`
+7. refresh manifest and gate for the accepted chapter
+
+`draft_chapter.py --mode auto`:
+
+- uses the new planning path when governing perspective, character engine,
+  planning split, scene options, and prior story state exist
+- otherwise raises instead of silently falling back to the legacy outline path
+
+`draft_chapter.py --mode new` requires:
+
+- `planning/perspective.md`
+- `planning/voice.md`
+- `planning/character_engine.json`
+- `planning/chapter_cards.md`
+- `planning/thread_registry.json`
+- `planning/world.md`
+- `planning/canon.md`
+- relevant `scene_options` and prior `story_state`
+
+New-mode context order:
+
+1. `planning/perspective.md`
+2. `planning/voice.md`
+3. `planning/character_engine.json`
+4. `state/story_state/ch_{n-1}.json`
+5. current chapter card
+6. `scene_options/ch_XX.json`
+7. local thread window
+8. `planning/world.md`
+9. `planning/canon.md`
+
+New-mode writing principles:
+
+- governing perspective is a hard constraint
+- blind spots are active, not decorative
+- humor belongs to the consciousness
+- characters think and speak within their ceiling
+- preserve the chapter card's irreversible change
+- choose the most alive scene option, not the most obedient one
+- optional non-plot threads may be deferred, migrated, or dropped
+
+## Planning Rules
+
+`planning/arc_outline.md` should contain only:
+
+- irreversible turns
+- major reveals
+- pressure escalations
+- candidate risk chapters
+
+`planning/thread_registry.json` should distinguish:
+
+- `plot`
+- `pressure`
+- `echo`
+- `texture`
+
+Do not assume every thread must pay off. `echo` and `texture` threads may
+persist for surplus life rather than plot closure.
+
+## Revision, Review, And Export
+
+Current revision loop:
+
+- `adversarial_edit.py`
+- `dialogue_audit.py`
+- `narration_audit.py`
+- `assemble_evidence_pack.py`
+- `reader_panel.py --evidence`
+- `humanity_panel.py --evidence`
+- `gen_brief.py --auto --require-patch-directives`
+- `patch_revision.py`
+- `apply_edits.py`
+- `evaluate.py --full --evidence`
+- `build_manifest.py --phase revision`
+- `consistency_gate.py --phase revision`
+
+Important distinctions:
+
+- revision is evidence-backed; summary-led full eval is not the primary loop
+- `review.py` is the final full-manuscript review phase after revision
+- patch revision depends on actionable directives; prose-only briefs are not
+  safe deterministic patch inputs
+
+Review phase:
+
+- `review.py --output reviews.md`
+- `review.py --parse`
+- `build_manifest.py --phase review`
+- `consistency_gate.py --phase review`
+
+Export phase:
+
+- `build_outline.py`
+- `build_arc_summary.py`
+- `typeset/build_tex.py`
+- `build_manifest.py --phase export`
+- `consistency_gate.py --phase export`
+
+`build_outline.py` and `build_arc_summary.py` rebuild compatibility artifacts
+from accepted prose plus the current planning stack and manifest metadata.
+
+## Propagation Rules
+
+When a file changes, check the downstream artifacts that depend on it:
+
+- `planning/perspective.md` -> review `planning/voice.md`, chapter cards, scene planning, and
+  new-mode prompts
+- `planning/world.md` -> review `planning/canon.md`, chapter cards, and accepted prose
+- `planning/characters.md` / `planning/character_engine.json` -> review dialogue,
+  behavior, and story state
+- `planning/arc_outline.md` -> review `planning/chapter_cards.md`, risk chapter
+  assumptions, and manifest risk output
+- `planning/chapter_cards.md` -> review scene options, accepted prose, variants,
+  and story-state assumptions
+- `planning/thread_registry.json` -> review scene options, local thread windows,
+  compatibility outline output, and export summaries
+- accepted prose -> update story state, evidence pack, export summaries, and
+  manifest counts as needed
+
+## Evaluation Rules
+
+Current evaluator reality:
+
+- evidence-pack evaluation is active in revision
+- `dialogue_audit.py` and `narration_audit.py` are active audit tools
+- `humanity_panel.py` is part of the evidence-backed revision loop
+- `review.py` remains the final full-manuscript reviewer
+- legacy no-arg `reader_panel.py` still exists for compatibility, but it is not
+  the primary revision path
 
 ## Rules
 
-- **NEVER STOP** during a phase. Keep looping until interrupted.
-- **Simpler is better**: Don't add complexity for marginal gains.
-- **Forward progress over perfection**: In Phase 2, a 6.0 chapter
-  is good enough. Phase 3 is for polish.
-- **Log everything**: Every experiment goes in results.tsv.
-- **Different judge**: Evaluation model should differ from writing model
-  when possible to avoid self-congratulation bias.
-- **Fight stability**: Actively push toward transformation, cost, and
-  genuine consequence. See "The Stability Trap" above.
-- **Specificity over abstraction**: "a jay" not "a bird." "lupine" not
-  "flowers." "the smell of hot iron" not "a metallic scent."
-- **Earn every metaphor**: Metaphors come from character experience.
-  A blacksmith thinks in terms of heat and metal. A sailor in tides.
+- Prefer the planning split and accepted prose over `planning/outline.md`.
+- Treat `planning/outline.md` and `arc_summary.md` as compatibility outputs.
+- Keep canonical state deterministic in shape.
+- Keep scene planning imaginative, but normalize saved outputs.
+- Preserve legacy compatibility where it does not distort current source of
+  truth.

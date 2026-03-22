@@ -11,8 +11,11 @@ import statistics
 from pathlib import Path
 from collections import Counter
 
+from manifest_tools import planned_chapter_count
+
 BASE_DIR = Path(__file__).parent
 CHAPTERS_DIR = BASE_DIR / "chapters"
+CHAPTER_FILE_RE = re.compile(r"^ch_(\d+)\.md$")
 
 # The three vocabulary wells from voice.md
 WELL_MUSICAL = {
@@ -29,7 +32,7 @@ WELL_MUSICAL = {
 
 WELL_TRADE = {
     "bronze", "metal", "iron", "copper", "alloy", "forge", "lathe",
-    "clapper", "gauge", "caliper", "oil", "linseed", "flux", "casting",
+    "gauge", "caliper", "oil", "linseed", "flux", "casting",
     "mold", "anvil", "hammer", "file", "workshop", "bench", "tools",
     "tool", "craft", "frame", "frames", "wax", "polish", "grain",
     "wood", "stone", "limestone", "coin", "coins", "contract", "contracts",
@@ -57,8 +60,36 @@ ABSTRACT_INDICATORS = {
     "awareness", "consciousness", "realization", "understanding",
 }
 
+
+def count_section_breaks(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip() == "---")
+
+
+def build_payload(
+    chapter_results: dict[str, dict[str, float | int]],
+    novel_average: dict[str, float | int],
+    outliers: dict[str, list[str]],
+    chapter_numbers: list[int],
+    planned_total: int,
+    missing: list[int],
+    note: str | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "chapters": chapter_results,
+        "novel_average": novel_average,
+        "outliers": outliers,
+        "available_chapters": chapter_numbers,
+        "planned_chapter_count": planned_total,
+    }
+    if missing:
+        payload["missing_chapters"] = missing
+    if note:
+        payload["note"] = note
+    return payload
+
+
 def analyze_chapter(path):
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     words = text.split()
     word_count = len(words)
     lower_words = [w.lower().strip(".,;:!?\"'()—-–") for w in words]
@@ -67,6 +98,7 @@ def analyze_chapter(path):
     sentences = re.split(r'[.!?]+', text)
     sentences = [s.strip() for s in sentences if len(s.strip().split()) > 2]
     sent_lengths = [len(s.split()) for s in sentences]
+    mean_sentence_length = statistics.mean(sent_lengths) if sent_lengths else 0
     
     # Paragraph analysis
     paragraphs = [p.strip() for p in text.split('\n\n') if p.strip() and not p.strip().startswith('#') and p.strip() != '---']
@@ -92,7 +124,7 @@ def analyze_chapter(path):
     em_per_1k = (em_dashes / word_count) * 1000 if word_count > 0 else 0
     
     # Section breaks
-    section_breaks = text.count('\n---\n') + text.count('\n\n---\n\n')
+    section_breaks = count_section_breaks(text)
     
     # Sentence starters (check for repetitive He/She/The)
     starters = []
@@ -118,9 +150,10 @@ def analyze_chapter(path):
         "word_count": word_count,
         "sentence_count": len(sentences),
         "paragraph_count": len(paragraphs),
-        "avg_sentence_length": round(statistics.mean(sent_lengths), 1) if sent_lengths else 0,
+        "avg_sentence_length": round(mean_sentence_length, 1) if sent_lengths else 0,
         "sentence_length_std": round(statistics.stdev(sent_lengths), 1) if len(sent_lengths) > 1 else 0,
-        "sentence_length_cv": round(statistics.stdev(sent_lengths) / statistics.mean(sent_lengths), 3) if sent_lengths and statistics.mean(sent_lengths) > 0 else 0,
+        "sentence_length_cv": round(statistics.stdev(sent_lengths) / mean_sentence_length, 3)
+        if len(sent_lengths) > 1 and mean_sentence_length > 0 else 0,
         "min_sentence": min(sent_lengths) if sent_lengths else 0,
         "max_sentence": max(sent_lengths) if sent_lengths else 0,
         "fragments_pct": round(fragments / len(sentences) * 100, 1) if sentences else 0,
@@ -140,20 +173,61 @@ def analyze_chapter(path):
         "simile_density": round((like_count + as_count) / (word_count / 1000), 1) if word_count > 0 else 0,
     }
 
+
+def discover_chapter_paths(chapters_dir: Path | None = None) -> list[tuple[int, Path]]:
+    chapters_dir = chapters_dir or CHAPTERS_DIR
+    chapter_paths: list[tuple[int, Path]] = []
+    for path in sorted(chapters_dir.glob("ch_*.md")):
+        match = CHAPTER_FILE_RE.match(path.name)
+        if match:
+            chapter_paths.append((int(match.group(1)), path))
+    return chapter_paths
+
+
+def missing_chapters(available: list[int], planned_total: int) -> list[int]:
+    if planned_total <= 0:
+        return []
+    available_set = set(available)
+    return [chapter for chapter in range(1, planned_total + 1) if chapter not in available_set]
+
+
 def main():
-    results = {}
-    for ch in range(1, 25):
-        path = CHAPTERS_DIR / f"ch_{ch:02d}.md"
-        if path.exists():
-            results[f"ch_{ch:02d}"] = analyze_chapter(path)
-    
+    chapter_entries = discover_chapter_paths()
+    chapter_numbers = [number for number, _path in chapter_entries]
+    planned_total = planned_chapter_count(BASE_DIR)
+    missing = missing_chapters(chapter_numbers, planned_total)
+
+    chapter_results = {}
+    for chapter_num, path in chapter_entries:
+        chapter_results[f"ch_{chapter_num:02d}"] = analyze_chapter(path)
+
     # Compute novel-wide averages
-    all_vals = list(results.values())
+    all_vals = list(chapter_results.values())
+    out_path = BASE_DIR / "edit_logs" / "voice_fingerprint.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not all_vals:
+        payload = build_payload(
+            chapter_results={},
+            novel_average={},
+            outliers={},
+            chapter_numbers=[],
+            planned_total=planned_total,
+            missing=[],
+            note="No chapter files were available yet; voice fingerprint is empty QA telemetry.",
+        )
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        print("VOICE FINGERPRINT")
+        print("=" * 70)
+        print("No chapter files found yet; wrote empty telemetry report.")
+        print(f"\nSaved to {out_path}")
+        return
+
     avg = {}
     for key in all_vals[0]:
         vals = [r[key] for r in all_vals]
         avg[key] = round(statistics.mean(vals), 2)
-    results["novel_average"] = avg
     
     # Find outliers (>1.5 std from mean)
     outliers = {}
@@ -163,9 +237,7 @@ def main():
             m = statistics.mean(vals)
             s = statistics.stdev(vals)
             if s > 0:
-                for ch_key, r in results.items():
-                    if ch_key == "novel_average":
-                        continue
+                for ch_key, r in chapter_results.items():
                     z = (r[key] - m) / s
                     if abs(z) > 1.5:
                         if ch_key not in outliers:
@@ -177,12 +249,12 @@ def main():
     print("VOICE FINGERPRINT")
     print("=" * 70)
     print(f"{'Ch':<8} {'Words':<7} {'AvgSnt':<7} {'CV':<6} {'Frag%':<7} {'Long%':<7} {'Dial%':<7} {'Mus%':<6} {'Trd%':<6} {'Bod%':<6} {'AbsPK':<6} {'HeStrt':<7}")
-    for ch in range(1, 25):
+    for ch in chapter_numbers:
         key = f"ch_{ch:02d}"
-        r = results[key]
+        r = chapter_results[key]
         print(f"  {ch:<6} {r['word_count']:<7} {r['avg_sentence_length']:<7} {r['sentence_length_cv']:<6} {r['fragments_pct']:<7} {r['long_sentences_pct']:<7} {r['dialogue_ratio']:<7} {r['well_musical_pct']:<6} {r['well_trade_pct']:<6} {r['well_body_pct']:<6} {r['abstract_per_1k']:<6} {r['he_start_pct']:<7}")
     
-    r = results["novel_average"]
+    r = avg
     print(f"  {'AVG':<6} {r['word_count']:<7} {r['avg_sentence_length']:<7} {r['sentence_length_cv']:<6} {r['fragments_pct']:<7} {r['long_sentences_pct']:<7} {r['dialogue_ratio']:<7} {r['well_musical_pct']:<6} {r['well_trade_pct']:<6} {r['well_body_pct']:<6} {r['abstract_per_1k']:<6} {r['he_start_pct']:<7}")
     
     print(f"\n\nOUTLIERS (>1.5σ from mean):")
@@ -190,11 +262,20 @@ def main():
         print(f"  {ch_key}:")
         for o in outliers[ch_key]:
             print(f"    {o}")
-    
+    if missing:
+        print(f"\nMissing planned chapters: {', '.join(str(ch) for ch in missing)}")
+
     # Save full results
-    out_path = BASE_DIR / "edit_logs" / "voice_fingerprint.json"
-    with open(out_path, "w") as f:
-        json.dump({"chapters": results, "outliers": outliers}, f, indent=2)
+    payload = build_payload(
+        chapter_results=chapter_results,
+        novel_average=avg,
+        outliers=outliers,
+        chapter_numbers=chapter_numbers,
+        planned_total=planned_total,
+        missing=missing,
+    )
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
     print(f"\nSaved to {out_path}")
 
 if __name__ == "__main__":

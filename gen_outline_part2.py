@@ -1,82 +1,111 @@
 #!/usr/bin/env python3
-"""Generate remaining chapters + foreshadowing ledger."""
-import os
+"""Compatibility wrapper for the legacy foreshadowing-ledger workflow."""
+
+from __future__ import annotations
+
+import argparse
+import json
 import sys
 from pathlib import Path
-from dotenv import load_dotenv
+
+from planning_split import (
+    normalize_thread_registry,
+    parse_arc_outline,
+    parse_chapter_cards,
+    render_legacy_outline,
+)
+from project_paths import ensure_parent_dir, planning_artifact_path
 
 BASE_DIR = Path(__file__).parent
-load_dotenv(BASE_DIR / ".env")
+DEFAULT_OUTPUT = planning_artifact_path("outline", BASE_DIR)
 
-WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
 
-def call_writer(prompt, max_tokens=16000):
-    import httpx
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": WRITER_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.5,
-        "system": (
-            "You are a novel architect continuing an outline. Write in the same format "
-            "as the preceding chapters. Every chapter needs: POV, Location, Save the Cat beat, "
-            "% mark, Emotional arc, Try-fail cycle, Beats, Plants, Payoffs, Character movement, "
-            "The lie, Word count target."
-        ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=600)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+def generate_thread_registry(*, output_path: Path) -> list[dict[str, object]]:
+    from gen_thread_registry import generate_thread_registry as _generate_thread_registry
 
-part1 = open('/tmp/outline_output.md').read()
-mystery = (BASE_DIR / "MYSTERY.md").read_text()
+    return _generate_thread_registry(output_path=output_path)
 
-prompt = f"""Here are the first 17 chapters of a 24-chapter outline for "The Second Son of the House of Bells."
-The outline was cut off mid-chapter-17. Continue from where it left off, then complete chapters 18-24,
-then write the Foreshadowing Ledger.
 
-THE OUTLINE SO FAR:
-{part1}
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Compatibility wrapper for the legacy gen_outline_part2.py flow"
+    )
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Where to write outline.md")
+    parser.add_argument("--arc-output", type=Path, default=planning_artifact_path("arc_outline", BASE_DIR), help="Arc output path")
+    parser.add_argument(
+        "--cards-output",
+        type=Path,
+        default=planning_artifact_path("chapter_cards", BASE_DIR),
+        help="Chapter cards output path",
+    )
+    parser.add_argument(
+        "--threads-output",
+        type=Path,
+        default=planning_artifact_path("thread_registry", BASE_DIR),
+        help="Thread registry output path",
+    )
+    parser.add_argument(
+        "--refresh-new-planning",
+        action="store_true",
+        help="Regenerate thread_registry.json before rendering outline.md",
+    )
+    return parser
 
-THE CENTRAL MYSTERY (for reference):
-{mystery}
 
-REMAINING STRUCTURE NEEDED:
+def load_existing_arc_and_cards(
+    arc_path: Path, cards_path: Path
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    missing = [path for path in (arc_path, cards_path) if not path.exists()]
+    if missing:
+        missing_lines = "\n".join(f"- {path}" for path in missing)
+        raise FileNotFoundError(
+            "Missing required planning artifact(s):\n"
+            f"{missing_lines}\n"
+            "gen_outline_part2.py is read-only by default. Generate arc_outline.md and "
+            "chapter_cards.md first."
+        )
 
-Ch 17 (complete it): Maret confrontation -- she reveals the truth about the void
-Ch 18: Dark Night of the Soul -- Cass processes what he's learned
-Ch 19: Break Into Three -- new information or perspective changes everything  
-Ch 20-21: Gathering forces, making a plan
-Ch 22: The climax at the Bell Tower -- Cass answers the question
-Ch 23: Aftermath and resolution
-Ch 24: Final Image (mirror of Opening Image)
+    arc = parse_arc_outline(arc_path.read_text())
+    cards = parse_chapter_cards(cards_path.read_text())
+    return arc, cards
 
-Then write:
 
-## Foreshadowing Ledger
+def load_existing_threads(threads_path: Path) -> list[dict[str, object]]:
+    if not threads_path.exists():
+        raise FileNotFoundError(
+            "Missing required planning artifact(s):\n"
+            f"- {threads_path}\n"
+            "gen_outline_part2.py is read-only by default. Generate thread_registry.json first, "
+            "or rerun with --refresh-new-planning once arc_outline.md and chapter_cards.md exist."
+        )
+    try:
+        return normalize_thread_registry(json.loads(threads_path.read_text()))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Could not parse existing thread registry JSON at {threads_path}: {exc}") from exc
 
-| # | Thread | Planted (Ch) | Reinforced (Ch) | Payoff (Ch) | Type |
-|---|--------|-------------|-----------------|-------------|------|
 
-Include at LEAST 15 threads. Types: object, dialogue, action, symbolic, structural.
-Plant-to-payoff distance must be at least 3 chapters.
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
-REMEMBER:
-- The climax uses the fourth option: Cass amplifies the question into audible range
-  so the city can hear and answer for themselves
-- This doesn't free Perin directly (Stability Trap -- not everything resolves cleanly)
-- Cass's lie must be fully shattered by the climax
-- Final Image should mirror Ch 1's Opening Image but show transformation
-- At least one quiet chapter in the back half
-"""
+    try:
+        arc, cards = load_existing_arc_and_cards(args.arc_output, args.cards_output)
+        if args.refresh_new_planning:
+            print("Refreshing thread_registry.json for legacy foreshadowing output...", file=sys.stderr)
+            threads = generate_thread_registry(output_path=args.threads_output)
+        else:
+            threads = load_existing_threads(args.threads_output)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
-print("Calling writer model...", file=sys.stderr)
-result = call_writer(prompt)
-print(result)
+    outline = render_legacy_outline(arc.get("title", "Outline"), arc, cards, threads)
+    ensure_parent_dir(args.output)
+    args.output.write_text(outline + "\n")
+    print(f"Saved legacy outline with foreshadowing ledger to {args.output}", file=sys.stderr)
+    print(outline)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

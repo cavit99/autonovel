@@ -26,12 +26,22 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 
 # Load .env file if present
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test runners
+    def load_dotenv(*_args, **_kwargs):
+        return False
 load_dotenv(BASE_DIR / ".env")
+
+from anthropic_api import enable_automatic_prompt_cache, message_text_from_response, text_block
+from evidence_tools import load_json, render_evidence_pack
+from project_paths import readable_planning_artifact_path
 
 # Judge uses Opus 4.6 (harsh, critical). Writer uses Sonnet 4.6 (fast, long context).
 # Intentionally different to avoid self-congratulation.
 JUDGE_MODEL = os.environ.get("AUTONOVEL_JUDGE_MODEL", "claude-opus-4-6")
+SMELL_MODEL = os.environ.get("AUTONOVEL_SMELL_MODEL", JUDGE_MODEL)
+AUTONOVEL_DIALOGUE_MODEL = os.environ.get("AUTONOVEL_DIALOGUE_MODEL", SMELL_MODEL)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE_URL = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
 
@@ -40,6 +50,16 @@ ANTHROPIC_BETA = "context-1m-2025-08-07"
 CHAPTERS_DIR = BASE_DIR / "chapters"
 EVAL_LOG_DIR = BASE_DIR / "eval_logs"
 EVAL_LOG_DIR.mkdir(exist_ok=True)
+FULL_EVIDENCE_MAX_TOKENS = 12000
+SUMMARY_MODE_FULL_WARNING = (
+    "WARNING: --full without --evidence uses degraded summary-mode judging. "
+    "Prefer --full --evidence <eval_logs/evidence_pack.json> for normalized full-novel evaluation."
+)
+JUDGE_SYSTEM_PROMPT = (
+    "You are a literary critic and novel editor. "
+    "You evaluate fiction with precision. Always respond with valid JSON. "
+    "No markdown fences, no preamble -- just the JSON object."
+)
 
 
 # ---- Mechanical Slop Detection (no LLM needed) ----
@@ -250,12 +270,108 @@ def load_file(path):
 def load_layer_files():
     """Load all planning layer files."""
     return {
-        "voice": load_file(BASE_DIR / "voice.md"),
-        "world": load_file(BASE_DIR / "world.md"),
-        "characters": load_file(BASE_DIR / "characters.md"),
-        "outline": load_file(BASE_DIR / "outline.md"),
-        "canon": load_file(BASE_DIR / "canon.md"),
+        "voice": load_file(readable_planning_artifact_path("voice", BASE_DIR)),
+        "world": load_file(readable_planning_artifact_path("world", BASE_DIR)),
+        "characters": load_file(readable_planning_artifact_path("characters", BASE_DIR)),
+        "outline": load_file(readable_planning_artifact_path("outline", BASE_DIR)),
+        "canon": load_file(readable_planning_artifact_path("canon", BASE_DIR)),
     }
+
+
+def load_extended_layer_files():
+    layers = load_layer_files()
+    layers.update(
+        {
+            "perspective": load_file(readable_planning_artifact_path("perspective", BASE_DIR)),
+            "character_engine": load_file(readable_planning_artifact_path("character_engine", BASE_DIR)),
+            "chapter_cards": load_file(readable_planning_artifact_path("chapter_cards", BASE_DIR)),
+            "thread_registry": load_file(readable_planning_artifact_path("thread_registry", BASE_DIR)),
+        }
+    )
+    return layers
+
+
+def render_thread_registry_window(raw_text: str, *, max_entries: int = 24) -> str:
+    text = raw_text.strip()
+    if not text:
+        return "(thread_registry.json missing or empty)"
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return text[:6000]
+
+    if not isinstance(parsed, list):
+        return text[:6000]
+
+    type_counts: dict[str, int] = {}
+    required_count = 0
+    open_count = 0
+    for entry in parsed:
+        if not isinstance(entry, dict):
+            continue
+        thread_type = str(entry.get("type", "unknown") or "unknown")
+        type_counts[thread_type] = type_counts.get(thread_type, 0) + 1
+        if entry.get("required"):
+            required_count += 1
+        payoff = entry.get("payoff")
+        if not payoff:
+            open_count += 1
+
+    lines = [f"entries: {len(parsed)}"]
+    if type_counts:
+        counts = ", ".join(f"{key}={type_counts[key]}" for key in sorted(type_counts))
+        lines.append(f"type_counts: {counts}")
+    lines.append(f"required_threads: {required_count}")
+    lines.append(f"threads_without_payoff: {open_count}")
+    lines.append("")
+
+    for index, entry in enumerate(parsed[:max_entries], start=1):
+        if not isinstance(entry, dict):
+            lines.append(f"{index}. {json.dumps(entry, ensure_ascii=True)}")
+            continue
+
+        reinforced = entry.get("reinforced", [])
+        if isinstance(reinforced, list):
+            reinforced_text = ", ".join(str(item) for item in reinforced) or "-"
+        else:
+            reinforced_text = str(reinforced)
+
+        first_seen = entry.get("first_seen", entry.get("planted", "?"))
+        payoff = entry.get("payoff", 0)
+        if isinstance(payoff, int):
+            status = "paid-off" if payoff > 0 else "open"
+        else:
+            status = "paid-off" if str(payoff).strip() else "open"
+
+        lines.append(
+            f"{index}. id={entry.get('id', '?')} | type={entry.get('type', 'unknown')} "
+            f"| first_seen={first_seen} | reinforced={reinforced_text} "
+            f"| payoff={payoff} | required={'yes' if entry.get('required') else 'no'} "
+            f"| status={status}"
+        )
+        lines.append(f"   description={entry.get('description', '')}")
+
+    omitted = len(parsed) - max_entries
+    if omitted > 0:
+        lines.append("")
+        lines.append(f"... {omitted} more thread entries omitted from this window.")
+
+    return "\n".join(lines)
+
+
+def load_foundation_layer_files():
+    layers = load_layer_files()
+    layers.update(
+        {
+            "perspective": load_file(readable_planning_artifact_path("perspective", BASE_DIR)),
+            "arc_outline": load_file(readable_planning_artifact_path("arc_outline", BASE_DIR)),
+            "chapter_cards": load_file(readable_planning_artifact_path("chapter_cards", BASE_DIR)),
+            "thread_registry": load_file(readable_planning_artifact_path("thread_registry", BASE_DIR)),
+        }
+    )
+    layers["thread_registry_window"] = render_thread_registry_window(layers["thread_registry"])
+    return layers
 
 
 def load_chapter(n):
@@ -272,7 +388,44 @@ def load_all_chapters():
     return chapters
 
 
-def call_judge(prompt, max_tokens=2000):
+def extract_chapter_reference(chapter_num: int, layers: dict[str, str]) -> str:
+    chapter_cards = layers.get("chapter_cards", "")
+    if chapter_cards.strip():
+        pattern = rf"##\s*Ch\s*{chapter_num}\b.*?(?=##\s*Ch\s*\d+|$)"
+        match = re.search(pattern, chapter_cards, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(0)
+
+    outline = layers.get("outline", "")
+    if outline.strip():
+        pattern = rf"###\s*Ch(?:apter)?\s*{chapter_num}\b.*?(?=###\s*Ch(?:apter)?\s*\d+|##\s*Act|##\s*Foreshadowing|$)"
+        match = re.search(pattern, outline, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(0)
+    return "(chapter plan reference not found)"
+
+
+def build_judge_payload(
+    *,
+    max_tokens: int = 2000,
+    prompt: str | None = None,
+    messages: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    if prompt is None and messages is None:
+        raise ValueError("call_judge requires either prompt text or structured messages")
+    payload = {
+        "model": JUDGE_MODEL,
+        "max_tokens": max_tokens,
+        "temperature": 0.3,
+        "system": JUDGE_SYSTEM_PROMPT,
+        "messages": messages if messages is not None else [{"role": "user", "content": prompt}],
+    }
+    if prompt is not None and messages is None:
+        enable_automatic_prompt_cache(payload)
+    return payload
+
+
+def call_judge(prompt=None, max_tokens=2000, *, messages: list[dict[str, object]] | None = None):
     """Call the Anthropic judge LLM and return its response text."""
     import httpx
 
@@ -282,17 +435,7 @@ def call_judge(prompt, max_tokens=2000):
         "anthropic-beta": ANTHROPIC_BETA,
         "content-type": "application/json",
     }
-    payload = {
-        "model": JUDGE_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.3,
-        "system": "You are a literary critic and novel editor. "
-                  "You evaluate fiction with precision. Always respond with valid JSON. "
-                  "No markdown fences, no preamble -- just the JSON object.",
-        "messages": [
-            {"role": "user", "content": prompt},
-        ],
-    }
+    payload = build_judge_payload(max_tokens=max_tokens, prompt=prompt, messages=messages)
 
     resp = httpx.post(
         f"{API_BASE_URL}/v1/messages",
@@ -300,8 +443,7 @@ def call_judge(prompt, max_tokens=2000):
         json=payload,
         timeout=180,
     )
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return message_text_from_response(resp, context="evaluate judge request")
 
 
 def parse_json_response(text):
@@ -348,29 +490,16 @@ def parse_json_response(text):
 
 # --- Foundation Evaluation ---
 
-FOUNDATION_PROMPT = """Evaluate these fantasy novel planning documents.
+FOUNDATION_PROMPT = """Evaluate the novel's current structural planning layer.
 
-SCORING CALIBRATION (read this before scoring anything):
+You are judging the post-bootstrap planning system, not just the legacy outline.
+Treat the approved bootstrap docs as governing context. Score the structural
+artifacts directly, because those are the files that will keep getting regenerated.
 
-  9-10: Could not improve this with a month of focused editorial work.
-        Published-novel quality. You can name the specific published
-        novel it competes with. Reserve 10 for work that SURPRISES you.
-  7-8:  Strong. A skilled author could draft from this document with
-        minimal invention. Gaps exist but are minor and enumerable.
-  5-6:  Functional but thin. A writer would need to invent significant
-        material on the fly. Major gaps or generic choices.
-  3-4:  Sketchy. More questions than answers. Would require heavy
-        supplementation before drafting.
-  1-2:  Placeholder or stub. Not usable for drafting.
-  0:    Empty or missing.
+APPROVED BOOTSTRAP CONTEXT (use as constraints and support):
 
-  A score of 8+ requires ZERO major gaps. A score of 9+ requires
-  that you genuinely struggled to find flaws. Err toward lower scores.
-
-MANDATORY: For EVERY dimension, before scoring, you must identify:
-  (a) The single biggest GAP or WEAKNESS in that area
-  (b) A specific, actionable improvement that would raise the score
-  If you cannot find a gap, explain why you believe one doesn't exist.
+GOVERNING PERSPECTIVE:
+{perspective}
 
 VOICE DEFINITION:
 {voice}
@@ -381,145 +510,215 @@ WORLD BIBLE:
 CHARACTER REGISTRY:
 {characters}
 
-OUTLINE:
-{outline}
-
-CANON (established facts):
+CANON:
 {canon}
 
+CURRENT STRUCTURAL PLANNING LAYER UNDER REVIEW (score this directly):
+
+ARC OUTLINE:
+{arc_outline}
+
+CHAPTER CARDS:
+{chapter_cards}
+
+THREAD REGISTRY WINDOW (rendered from thread_registry.json):
+{thread_registry_window}
+
+LEGACY OUTLINE REBUILD / EXPORT VIEW:
+{outline}
+
+SCORING CALIBRATION:
+  9-10: Published-novel planning architecture. A skilled writer could draft
+        from these structural artifacts with almost no invention.
+  7-8:  Strong structural plan. A few gaps exist, but the book shape,
+        chapter pressure, and thread handling are mostly draft-ready.
+  5-6:  Functional but under-specified. The writer would still need to
+        invent connective tissue, payoffs, or chapter logic while drafting.
+  3-4:  Sketchy or contradictory. The architecture exists in fragments but
+        would force repeated re-planning mid-draft.
+  1-2:  Placeholder-level structure. Not usable as a drafting scaffold.
+  0:    Empty or missing.
+
+MANDATORY: For EVERY dimension, before scoring, identify:
+  (a) the single biggest gap or weakness
+  (b) one concrete change that would raise the score
+If you cannot find a gap, explain why not.
+
 CROSS-CHECKS (perform these before scoring):
-1. Check all example dialogue lines against ANTI-SLOP patterns:
-   - Look for structural formulas repeated across characters
-     ("not X, but Y" / "either X, or Y" / "there's a difference")
-   - Check for AI rhetorical tics disguised as character voice
-   - Deduct from character_distinctiveness if multiple characters
-     share the same sentence structures
-2. Check for missing NEGATIVE SPACE -- what's absent?
-   - Are there gaps in the magic system that would block a specific
-     plot scene? (e.g., can Cass hear lies in written documents?
-     What happens during the climax -- what rule resolves it?)
-   - Are there characters needed for the plot who don't exist?
-   - Are there scenes the outline demands that the world can't support?
-3. Check for CONVENIENT GAPS vs DELIBERATE MYSTERY:
-   - Convenient: "the details are unclear" where specifics are needed
-   - Deliberate: withholding information from the READER while the
-     AUTHOR knows the answer. If the planning docs dodge a question
-     that a writer would need answered to draft a scene, that's a gap,
-     not an iceberg.
-4. Check the canon for INTERNAL CONTRADICTIONS:
-   - Cross-reference dates, ages, and timelines
-   - Check if character abilities match magic system rules
-   - Look for factual conflicts between documents
+1. Judge the structural artifacts as a system:
+   - Does the arc outline create causal pressure for the whole book?
+   - Do chapter cards cash out that pressure chapter by chapter?
+   - Does the thread registry track the plants/payoffs that the cards and outline imply?
+   - Does the rebuilt outline faithfully synthesize the same plan instead of drifting?
+2. Check bootstrap-to-structure alignment:
+   - Do the planned turns require POV handling that perspective.md actually supports?
+   - Do world rules, factions, and locations support the current set pieces?
+   - Do the character docs support the secrets, reversals, and pressure now assigned?
+   - Does canon contain the hard facts a drafter would need for this structure?
+3. Check for convenient gaps vs deliberate mystery:
+   - If the writer would need to stop and invent a missing turn, payoff, POV assignment,
+     cost/constraint, or chapter objective, score down.
+4. Check internal consistency across all docs:
+   - Chapter numbering/order
+   - Reveals or payoffs happening before setup
+   - POV mismatches against perspective
+   - World/canon contradictions that would break the planned scenes
 
 Score these dimensions (gap + improvement required for each):
 
-LORE & WORLDBUILDING:
-- magic_system: Hard rules with COSTS and LIMITATIONS per Sanderson's
-  Second Law. Could a writer resolve the CLIMACTIC CONFLICT using only
-  rules already established? Are costs plot-driving, not decorative?
-  Are there at least 3 societal implications explored with specificity?
-  Is the system TESTABLE -- could you write a courtroom scene, a
-  contract negotiation, and a magical confrontation without inventing
-  new rules?
-- world_history: Timeline of events creating PRESENT-DAY tensions.
-  Each historical event should map to a current faction conflict or
-  character motivation. Decorative history (cool but plot-irrelevant)
-  counts against the score, not for it.
-- geography_and_culture: Locations distinct with sensory signatures.
-  Cultures with specific customs that GENERATE CONFLICT. Economy that
-  creates class tension. Check: could two different scenes set in two
-  different locations feel meaningfully different based on what's here?
-- lore_interconnection: Does changing one element force changes in
-  at least two others? Test by mentally removing the magic system --
-  does the political structure collapse? Does the class system change?
-  If elements are modular/detachable, score low.
-- iceberg_depth: Implied depth vs stated depth. But CHECK: does the
-  author actually know the answers to the mysteries, or are they
-  handwaving? If a planning doc says "the answer will be revealed"
-  without specifying WHAT the answer is, that's a gap wearing an
-  iceberg costume.
-
-CHARACTER:
-- character_depth: Wound/want/need/lie chains that are CAUSALLY LINKED
-  (not just thematically associated). The lie must logically follow
-  from the wound. The want must be the wrong solution to the lie.
-  The need must directly oppose the want. Check each chain for
-  logical gaps. Also check: are ANY characters missing wound/want/need
-  chains who probably need them?
-- character_distinctiveness: Remove all dialogue tags from the example
-  lines. Can you identify the speaker from sentence structure alone?
-  Check for REPEATED STRUCTURAL FORMULAS across characters (e.g.,
-  multiple characters using "X. Not Y." or balanced antithesis).
-  Check that metaphor domains don't overlap. Check that speech
-  patterns reflect character background (a 14-year-old should not
-  sound like a 60-year-old merchant).
-- character_secrets: Each major character's secret should be something
-  that, if revealed, changes the plot's trajectory. Vague secrets
-  ("he knows more than he says") score lower than specific ones
-  ("he knows the harmonic means X, which would invalidate Y").
-
-STRUCTURE:
-- outline_completeness: Chapters with beats, POV, emotional arc,
-  try-fail cycle type. Save the Cat beats at correct % marks.
-  Score 0 if empty. Score 5+ only if act structure exists.
-- foreshadowing_balance: Every planted thread has a planned payoff.
-  Score 0 if ledger is empty regardless of implicit threads in
-  other documents -- foreshadowing must be TRACKED to count.
-
-CRAFT:
-- internal_consistency: Actively hunt for contradictions. Cross-ref
-  dates, ages, character counts, named locations. Flag any case
-  where documents disagree. A single major contradiction caps this
-  at 6. Three or more caps at 4.
-- voice_clarity: Voice definition must be specific and ACTIONABLE.
-  Exemplar passages must demonstrate the voice. Anti-exemplars must
-  define boundaries. Check exemplar dialogue for AI slop patterns.
-  A voice doc that is beautiful but contains slop in its own examples
-  is undermined -- deduct.
-- canon_coverage: Facts logged, sourced, and sufficient to catch
-  contradictions. Check: if a writer introduced a NEW fact in
-  chapter 5, could they verify it against the canon? Is the canon
-  granular enough? Are there known facts from other docs that
-  AREN'T in the canon?
+- perspective_alignment: Does the structural plan clearly honor the governing
+  perspective? Check POV allocation, access to information, distance, and
+  whether the planned chapters feel perceived by an intentional mind rather
+  than by a generic outline voice.
+- arc_coherence: Do irreversible turns, reveals, escalations, and candidate
+  risk chapters create a causal book shape? Score down for decorative turns,
+  missing midpoint logic, or escalation that does not change later chapters.
+- chapter_card_specificity: Are the cards draftable? Each chapter should have
+  a concrete goal, pressure, reversal, aftermath, irreversible change, and
+  enough scene-method specificity that a writer is not inventing the real plan
+  on the fly.
+- thread_payoff_design: Does the thread registry meaningfully track the book's
+  active plants? Are first_seen, reinforcement, payoff, required/open status,
+  and descriptions specific enough to guide drafting and revisions?
+- outline_synthesis: Does outline.md accurately synthesize the arc outline,
+  chapter cards, and thread registry into one coherent book plan? If the
+  outline drifts, omits core beats, or contradicts the live artifacts, score low.
+- world_support: Do the approved world rules, tensions, and locations support
+  the planned chapters and reveals now on the board? Score down if structural
+  turns require world mechanics or settings not actually established.
+- character_support: Do the approved characters support the pressure,
+  reversals, secrets, and conflicts now assigned in the structural layer?
+  Score down if chapters require missing motives, relationships, or roles.
+- canon_readiness: Is canon.md strong enough to keep this structural plan
+  factual during drafting? Score down if the plan depends on facts, timelines,
+  names, or rules that are not logged.
+- voice_guardrails: Does the approved voice remain actionable for the kinds of
+  scenes the current structure demands? Score down if the plan implies tonal or
+  stylistic needs the voice doc does not equip the drafter to execute.
+- internal_consistency: Hunt for contradictions across bootstrap docs plus the
+  structural layer. One major contradiction should cap this at 6. Multiple
+  contradictions should cap it at 4.
 
 Respond with JSON:
 {{
-  "magic_system": {{"score": N, "gap": "biggest weakness", "fix": "specific improvement", "note": "..."}},
-  "world_history": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "geography_and_culture": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "lore_interconnection": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "iceberg_depth": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "character_depth": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "character_distinctiveness": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "character_secrets": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "outline_completeness": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "foreshadowing_balance": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
+  "perspective_alignment": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
+  "arc_coherence": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
+  "chapter_card_specificity": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
+  "thread_payoff_design": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
+  "outline_synthesis": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
+  "world_support": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
+  "character_support": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
+  "canon_readiness": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
+  "voice_guardrails": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
   "internal_consistency": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "voice_clarity": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "canon_coverage": {{"score": N, "gap": "...", "fix": "...", "note": "..."}},
-  "slop_in_planning_docs": {{"found": ["list any AI slop patterns found in exemplar dialogue, voice examples, or character descriptions"], "note": "..."}},
+  "structural_artifacts_used": [
+    "planning/perspective.md",
+    "planning/arc_outline.md",
+    "planning/chapter_cards.md",
+    "planning/thread_registry.json",
+    "planning/outline.md"
+  ],
   "contradictions_found": ["list any factual contradictions between documents"],
   "overall_score": N,
+  "structure_score": N,
   "lore_score": N,
   "weakest_dimension": "...",
   "top_3_improvements": ["ranked list of the 3 highest-leverage improvements"]
 }}
 
-WEIGHTING: lore/worldbuilding 40%, character 30%, structure 20%, craft 10%.
-A novel with thin worldbuilding but a complete outline is WORSE than deep
-worldbuilding with an incomplete outline.
+WEIGHTING:
+- structure score: 60%
+- bootstrap support / lore score: 25%
+- consistency + voice guardrails: 15%
 
-FINAL CHECK: If your overall_score is above 7, re-read your gap lists.
-If any gap describes a problem that would force a writer to stop and
-invent something during drafting, your score is too high. Revise down.
+lore_score should reflect how well world/character/canon support the current
+structural plan, not just how rich the background docs feel in isolation.
+
+FINAL CHECK:
+If overall_score is above 7, re-read your gap list. If any gap would force a
+writer to stop and invent structure, payoff logic, POV handling, or missing
+supporting facts during drafting, the score is too high. Revise down.
 """
 
 
+def build_foundation_prompt(layers: dict[str, str]) -> str:
+    foundation_layers = {
+        "perspective": layers.get("perspective", ""),
+        "voice": layers.get("voice", ""),
+        "world": layers.get("world", ""),
+        "characters": layers.get("characters", ""),
+        "canon": layers.get("canon", ""),
+        "arc_outline": layers.get("arc_outline", ""),
+        "chapter_cards": layers.get("chapter_cards", ""),
+        "thread_registry_window": layers.get("thread_registry_window")
+        or render_thread_registry_window(layers.get("thread_registry", "")),
+        "outline": layers.get("outline", ""),
+    }
+    return FOUNDATION_PROMPT.format(**foundation_layers)
+
+
+def _dimension_score(result: dict, key: str) -> float | None:
+    value = result.get(key)
+    if not isinstance(value, dict):
+        return None
+    score = value.get("score")
+    if isinstance(score, (int, float)):
+        return float(score)
+    return None
+
+
+def _average_dimension_scores(result: dict, keys: list[str]) -> float | None:
+    scores = [_dimension_score(result, key) for key in keys]
+    filtered = [score for score in scores if score is not None]
+    if not filtered:
+        return None
+    return round(sum(filtered) / len(filtered), 2)
+
+
+def normalize_foundation_result(result: dict) -> dict:
+    result.setdefault(
+        "structural_artifacts_used",
+        [
+            "planning/perspective.md",
+            "planning/arc_outline.md",
+            "planning/chapter_cards.md",
+            "planning/thread_registry.json",
+            "planning/outline.md",
+        ],
+    )
+    result.setdefault("contradictions_found", [])
+    result.setdefault("top_3_improvements", [])
+    result.setdefault("weakest_dimension", "unknown")
+
+    structure_score = _average_dimension_scores(
+        result,
+        [
+            "perspective_alignment",
+            "arc_coherence",
+            "chapter_card_specificity",
+            "thread_payoff_design",
+            "outline_synthesis",
+        ],
+    )
+    lore_score = _average_dimension_scores(
+        result,
+        ["world_support", "character_support", "canon_readiness"],
+    )
+
+    if "structure_score" not in result:
+        result["structure_score"] = structure_score if structure_score is not None else float(result.get("overall_score", 0))
+    if "lore_score" not in result:
+        fallback = lore_score if lore_score is not None else result["structure_score"]
+        result["lore_score"] = fallback
+    result.setdefault("overall_score", result.get("structure_score", result.get("lore_score", 0.0)))
+    return result
+
+
 def evaluate_foundation():
-    layers = load_layer_files()
-    prompt = FOUNDATION_PROMPT.format(**layers)
+    layers = load_foundation_layer_files()
+    prompt = build_foundation_prompt(layers)
     raw = call_judge(prompt, max_tokens=16000)
-    return parse_json_response(raw)
+    return normalize_foundation_result(parse_json_response(raw))
 
 
 # --- Chapter Evaluation ---
@@ -610,8 +809,8 @@ Score these dimensions:
 
 - character_voice: Remove all dialogue tags mentally. Can you tell who's
   speaking? Do characters ever sound alike? Does dialogue read as speech
-  or as written prose? Does Cass sound like a specific 14-year-old, or
-  like "young protagonist"? Does anyone say something surprising -- not
+  or as written prose? Does the primary viewpoint character sound age-
+  and background-specific, or like "young protagonist"? Does anyone say something surprising -- not
   just the right thing, but a REAL thing? Characters who never stumble,
   hesitate, or say something slightly wrong are AI-pattern characters.
 
@@ -621,7 +820,7 @@ Score these dimensions:
 
 - prose_quality: Sentence variety (measure: do 3+ consecutive sentences
   start the same way?). Specificity (concrete nouns > abstract).
-  Metaphors from Cass's experience, not from a thesaurus. Show-don't-tell
+  Metaphors from the viewpoint character's experience, not from a thesaurus. Show-don't-tell
   at emotional peaks. QUOTE the weakest sentence and explain why. Also
   check for: repeated phrases, leaned-on constructions, paragraphs that
   could be cut without loss.
@@ -670,34 +869,383 @@ is rare. A 10 does not exist for a first draft.
 """
 
 
-def evaluate_chapter(chapter_num):
-    layers = load_layer_files()
+CHAPTER_PROMPT_V2 = """Evaluate this fantasy novel chapter against the planning docs and governing perspective.
+
+GOVERNING PERSPECTIVE:
+{perspective}
+
+VOICE DEFINITION:
+{voice}
+
+CHARACTER REGISTRY:
+{characters}
+
+CHARACTER ENGINE:
+{character_engine}
+
+WORLD BIBLE:
+{world}
+
+CANON:
+{canon}
+
+THREAD REGISTRY WINDOW:
+{thread_registry}
+
+CHAPTER PLAN REFERENCE:
+{chapter_reference}
+
+PREVIOUS CHAPTER (tail):
+{prev_chapter_tail}
+
+CHAPTER TO EVALUATE:
+{chapter_text}
+
+Score the chapter on these dimensions. For every scored dimension, give:
+- score
+- weakest_moment
+- fix
+- note
+
+Primary chapter dimensions:
+- baseline_voice
+- perspective_distinctiveness
+- character_truthfulness
+- dialogue_separability
+- formal_enactment
+- surplus_life
+- scene_method_freshness
+- humor_signature
+- prose_quality
+- continuity
+- canon_compliance
+- lore_integration
+- engagement
+
+Compatibility dimensions for existing tools:
+- voice_adherence
+- beat_coverage
+- character_voice
+- plants_seeded
+
+Definitions:
+- baseline_voice: does the chapter still sound like the established book?
+- perspective_distinctiveness: does the chapter feel perceived by a specific mind with blind spots?
+- character_truthfulness: do people behave from contradiction, pressure, concealment, and cognitive ceiling?
+- dialogue_separability: can speakers be distinguished and do they sound socially alive rather than theme-perfect?
+- formal_enactment: does prose shape change when content changes? obsession scenes, unbearable scenes, bureaucracy, bodily stress should not all read the same
+- surplus_life: are there details serving the world and scene rather than only the argument?
+- scene_method_freshness: does the scene arrive through a vivid method rather than obedient beat execution?
+- humor_signature: does any humor feel native to the governing consciousness?
+- beat_coverage: how well does the chapter honor its current plan reference without becoming mechanical?
+- plants_seeded: are threads and plants integrated naturally rather than telegraphed?
+
+AI-pattern checks:
+- generic abstract dialogue
+- repeated sentence openings
+- metaphor domains that do not belong to the viewpoint or speaker
+- theme-perfect lines
+- explanation after the scene already showed the point
+
+Return JSON:
+{{
+  "baseline_voice": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "perspective_distinctiveness": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "character_truthfulness": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "dialogue_separability": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "formal_enactment": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "surplus_life": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "scene_method_freshness": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "humor_signature": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "prose_quality": {{"score": N, "weakest_sentence": "...", "fix": "...", "strongest_sentence": "...", "note": "..."}},
+  "continuity": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "canon_compliance": {{"score": N, "violations": ["..."], "note": "..."}},
+  "lore_integration": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "engagement": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "voice_adherence": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "beat_coverage": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "character_voice": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "plants_seeded": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "three_weakest_sentences": ["quote 1", "quote 2", "quote 3"],
+  "three_strongest_sentences": ["quote 1", "quote 2", "quote 3"],
+  "ai_patterns_detected": ["list any AI writing patterns found"],
+  "overall_score": N,
+  "weakest_dimension": "...",
+  "top_3_revisions": ["specific revision 1", "specific revision 2", "specific revision 3"],
+  "new_canon_entries": ["any new facts established in this chapter"]
+  {risk_schema}
+}}
+"""
+
+
+def build_chapter_judge_message_content(
+    *,
+    perspective: str,
+    voice: str,
+    characters: str,
+    character_engine: str,
+    world: str,
+    canon: str,
+    thread_registry: str,
+    chapter_reference: str,
+    prev_chapter_tail: str,
+    chapter_text: str,
+    include_risk: bool,
+) -> list[dict[str, object]]:
+    shared_context = f"""Evaluate this fantasy novel chapter against the planning docs and governing perspective.
+
+GOVERNING PERSPECTIVE:
+{perspective}
+
+VOICE DEFINITION:
+{voice}
+
+CHARACTER REGISTRY:
+{characters}
+
+CHARACTER ENGINE:
+{character_engine}
+
+WORLD BIBLE:
+{world}
+
+CANON:
+{canon}
+
+THREAD REGISTRY WINDOW:
+{thread_registry}
+
+Score the chapter on these dimensions. For every scored dimension, give:
+- score
+- weakest_moment
+- fix
+- note
+
+Primary chapter dimensions:
+- baseline_voice
+- perspective_distinctiveness
+- character_truthfulness
+- dialogue_separability
+- formal_enactment
+- surplus_life
+- scene_method_freshness
+- humor_signature
+- prose_quality
+- continuity
+- canon_compliance
+- lore_integration
+- engagement
+
+Compatibility dimensions for existing tools:
+- voice_adherence
+- beat_coverage
+- character_voice
+- plants_seeded
+
+Definitions:
+- baseline_voice: does the chapter still sound like the established book?
+- perspective_distinctiveness: does the chapter feel perceived by a specific mind with blind spots?
+- character_truthfulness: do people behave from contradiction, pressure, concealment, and cognitive ceiling?
+- dialogue_separability: can speakers be distinguished and do they sound socially alive rather than theme-perfect?
+- formal_enactment: does prose shape change when content changes? obsession scenes, unbearable scenes, bureaucracy, bodily stress should not all read the same
+- surplus_life: are there details serving the world and scene rather than only the argument?
+- scene_method_freshness: does the scene arrive through a vivid method rather than obedient beat execution?
+- humor_signature: does any humor feel native to the governing consciousness?
+- beat_coverage: how well does the chapter honor its current plan reference without becoming mechanical?
+- plants_seeded: are threads and plants integrated naturally rather than telegraphed?
+
+AI-pattern checks:
+- generic abstract dialogue
+- repeated sentence openings
+- metaphor domains that do not belong to the viewpoint or speaker
+- theme-perfect lines
+- explanation after the scene already showed the point
+
+Return JSON:
+{{
+  "baseline_voice": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "perspective_distinctiveness": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "character_truthfulness": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "dialogue_separability": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "formal_enactment": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "surplus_life": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "scene_method_freshness": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "humor_signature": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "prose_quality": {{"score": N, "weakest_sentence": "...", "fix": "...", "strongest_sentence": "...", "note": "..."}},
+  "continuity": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "canon_compliance": {{"score": N, "violations": ["..."], "note": "..."}},
+  "lore_integration": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "engagement": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "voice_adherence": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "beat_coverage": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "character_voice": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "plants_seeded": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "three_weakest_sentences": ["quote 1", "quote 2", "quote 3"],
+  "three_strongest_sentences": ["quote 1", "quote 2", "quote 3"],
+  "ai_patterns_detected": ["list any AI writing patterns found"],
+  "overall_score": N,
+  "weakest_dimension": "...",
+  "top_3_revisions": ["specific revision 1", "specific revision 2", "specific revision 3"],
+  "new_canon_entries": ["any new facts established in this chapter"]
+  {build_risk_schema(include_risk)}
+}}
+"""
+    chapter_context = f"""CHAPTER PLAN REFERENCE:
+{chapter_reference}
+
+PREVIOUS CHAPTER (tail):
+{prev_chapter_tail}
+
+CHAPTER TO EVALUATE:
+{chapter_text}
+"""
+    return [text_block(shared_context, cache=True), text_block(chapter_context)]
+
+
+FULL_NOVEL_EVIDENCE_PROMPT = """Evaluate this fantasy novel holistically from planning docs plus an evidence pack of real passages.
+
+VOICE:
+{voice}
+
+PERSPECTIVE:
+{perspective}
+
+WORLD:
+{world}
+
+CHARACTERS:
+{characters}
+
+CANON:
+{canon}
+
+THREAD REGISTRY:
+{thread_registry}
+
+EVIDENCE PACK:
+{evidence}
+
+Score these novel-level dimensions:
+- arc_completion
+- pacing_curve
+- perspective_continuity
+- formal_variety
+- temporal_variety
+- theme_pressure
+- surplus_life
+- human_texture
+- over_determinedness_penalty
+- world_consistency
+- overall_engagement
+
+Compatibility dimensions for existing tooling:
+- theme_coherence
+- foreshadowing_resolution
+- voice_consistency
+
+Rules:
+- Do not hard-cap theme coherence.
+- If theme pressure is high and surplus life is low, apply an over_determinedness_penalty and explain why.
+- Tie major claims to the evidence pack's real passages and chapter numbers.
+- Name the weakest chapter if the evidence supports one.
+
+Return JSON:
+{{
+  "arc_completion": {{"score": N, "note": "..."}},
+  "pacing_curve": {{"score": N, "note": "..."}},
+  "perspective_continuity": {{"score": N, "note": "..."}},
+  "formal_variety": {{"score": N, "note": "..."}},
+  "temporal_variety": {{"score": N, "note": "..."}},
+  "theme_pressure": {{"score": N, "note": "..."}},
+  "surplus_life": {{"score": N, "note": "..."}},
+  "human_texture": {{"score": N, "note": "..."}},
+  "over_determinedness_penalty": {{"score": N, "note": "..."}},
+  "world_consistency": {{"score": N, "note": "..."}},
+  "overall_engagement": {{"score": N, "note": "..."}},
+  "theme_coherence": {{"score": N, "note": "..."}},
+  "foreshadowing_resolution": {{"score": N, "note": "..."}},
+  "voice_consistency": {{"score": N, "note": "..."}},
+  "novel_score": N,
+  "weakest_dimension": "...",
+  "weakest_chapter": N,
+  "top_suggestion": "..."
+}}
+"""
+
+
+def build_risk_schema(include_risk: bool) -> str:
+    if not include_risk:
+        return ""
+    return ',\n  "risk_assessment": {"interestingness": N, "necessity": N, "coherence_floor": N, "note": "..."}'
+
+
+def ensure_dimension(
+    result: dict,
+    target_key: str,
+    source_key: str,
+    *,
+    default_note: str,
+) -> None:
+    if target_key in result:
+        return
+    source = result.get(source_key)
+    if isinstance(source, dict):
+        result[target_key] = {
+            "score": source.get("score", 0),
+            "weakest_moment": source.get("weakest_moment", source.get("weakest_sentence", "")),
+            "fix": source.get("fix", ""),
+            "note": source.get("note", default_note),
+        }
+        return
+    result[target_key] = {"score": 0, "weakest_moment": "", "fix": "", "note": default_note}
+
+
+def normalize_chapter_result(result: dict, include_risk: bool) -> dict:
+    ensure_dimension(result, "voice_adherence", "baseline_voice", default_note="compatibility alias for baseline_voice")
+    ensure_dimension(result, "character_voice", "dialogue_separability", default_note="compatibility alias for dialogue_separability")
+    ensure_dimension(result, "beat_coverage", "scene_method_freshness", default_note="compatibility alias for scene_method_freshness")
+    ensure_dimension(result, "plants_seeded", "lore_integration", default_note="compatibility alias for lore_integration")
+    result.setdefault("three_weakest_sentences", [])
+    result.setdefault("three_strongest_sentences", [])
+    result.setdefault("ai_patterns_detected", [])
+    result.setdefault("top_3_revisions", [])
+    result.setdefault("new_canon_entries", [])
+    result.setdefault("weakest_dimension", "unknown")
+    if include_risk and "risk_assessment" not in result:
+        result["risk_assessment"] = {
+            "interestingness": result.get("engagement", {}).get("score", 0),
+            "necessity": result.get("scene_method_freshness", {}).get("score", 0),
+            "coherence_floor": result.get("continuity", {}).get("score", 0),
+            "note": "Fallback risk rubric derived from chapter dimensions.",
+        }
+    return result
+
+
+def evaluate_chapter(chapter_num, *, include_risk: bool = False):
+    layers = load_extended_layer_files()
     chapter_text = load_chapter(chapter_num)
     if not chapter_text.strip():
         return {"error": f"Chapter {chapter_num} is empty or missing",
                 "overall_score": 0.0}
 
-    # Extract this chapter's outline entry (rough heuristic)
-    outline = layers["outline"]
-    ch_pattern = rf'###\s*Ch\s*{chapter_num}\b.*?(?=###\s*Ch\s*\d|## Act|## Foreshadowing|$)'
-    ch_match = re.search(ch_pattern, outline, re.DOTALL)
-    chapter_outline = ch_match.group(0) if ch_match else "(outline entry not found)"
-
-    # Load previous chapter tail
     prev_text = load_chapter(chapter_num - 1) if chapter_num > 1 else "(first chapter)"
     prev_tail = prev_text[-3000:] if len(prev_text) > 3000 else prev_text
 
-    prompt = CHAPTER_PROMPT.format(
+    messages = build_chapter_judge_message_content(
+        perspective=layers["perspective"][:3000],
         voice=layers["voice"],
-        world=layers["world"][:4000],  # truncate world bible
+        world=layers["world"][:4000],
         characters=layers["characters"],
+        character_engine=layers["character_engine"][:6000],
         canon=layers["canon"],
-        chapter_outline=chapter_outline,
+        thread_registry=layers["thread_registry"][:3000],
+        chapter_reference=extract_chapter_reference(chapter_num, layers),
         prev_chapter_tail=prev_tail,
         chapter_text=chapter_text,
+        include_risk=include_risk,
     )
-    raw = call_judge(prompt, max_tokens=8000)
-    result = parse_json_response(raw)
+    raw = call_judge(max_tokens=8000, messages=[{"role": "user", "content": messages}])
+    result = normalize_chapter_result(parse_json_response(raw), include_risk)
 
     # Mechanical slop check -- adjusts score independently of judge
     slop = slop_score(chapter_text)
@@ -756,12 +1304,59 @@ Respond with JSON:
 """
 
 
-def evaluate_full():
+def normalize_full_result(result: dict) -> dict:
+    if "theme_coherence" not in result and "theme_pressure" in result:
+        result["theme_coherence"] = {
+            "score": result["theme_pressure"].get("score", 0),
+            "note": "compatibility alias for theme_pressure",
+        }
+    if "foreshadowing_resolution" not in result and "arc_completion" in result:
+        result["foreshadowing_resolution"] = {
+            "score": result["arc_completion"].get("score", 0),
+            "note": "compatibility alias for arc_completion",
+        }
+    if "voice_consistency" not in result and "perspective_continuity" in result:
+        result["voice_consistency"] = {
+            "score": result["perspective_continuity"].get("score", 0),
+            "note": "compatibility alias for perspective_continuity",
+        }
+    result.setdefault("weakest_dimension", "unknown")
+    result.setdefault("weakest_chapter", 0)
+    result.setdefault("top_suggestion", "")
+    return result
+
+
+def evaluate_full(evidence_path: str | None = None):
+    if evidence_path:
+        layers = load_extended_layer_files()
+        evidence_pack = load_json(Path(evidence_path))
+        prompt = FULL_NOVEL_EVIDENCE_PROMPT.format(
+            voice=layers["voice"][:3000],
+            perspective=layers["perspective"][:2500],
+            world=layers["world"][:2500],
+            characters=layers["characters"][:3000],
+            canon=layers["canon"][:2500],
+            thread_registry=layers["thread_registry"][:2500],
+            evidence=render_evidence_pack(evidence_pack),
+        )
+        raw = call_judge(prompt, max_tokens=FULL_EVIDENCE_MAX_TOKENS)
+        result = normalize_full_result(parse_json_response(raw))
+        result.setdefault("evaluation_mode", "evidence")
+        return result
+
+    print(SUMMARY_MODE_FULL_WARNING, file=sys.stderr)
     layers = load_layer_files()
     chapters = load_all_chapters()
 
     if not chapters:
-        return {"error": "No chapters found", "novel_score": 0.0}
+        return normalize_full_result(
+            {
+                "error": "No chapters found",
+                "novel_score": 0.0,
+                "warning": SUMMARY_MODE_FULL_WARNING,
+                "evaluation_mode": "summary_fallback",
+            }
+        )
 
     # Build chapter summaries (first/last 500 chars of each)
     summaries = []
@@ -784,7 +1379,10 @@ def evaluate_full():
         chapter_summaries="\n".join(summaries),
     )
     raw = call_judge(prompt)
-    return parse_json_response(raw)
+    result = normalize_full_result(parse_json_response(raw))
+    result.setdefault("warning", SUMMARY_MODE_FULL_WARNING)
+    result.setdefault("evaluation_mode", "summary_fallback")
+    return result
 
 
 # --- Main ---
@@ -798,16 +1396,25 @@ def main():
                        help="Evaluate a specific chapter number")
     group.add_argument("--full", action="store_true",
                        help="Evaluate the entire novel")
+    parser.add_argument(
+        "--evidence",
+        help="Optional evidence-pack JSON path. Used by --full and accepted for forward compatibility elsewhere.",
+    )
+    parser.add_argument(
+        "--risk",
+        action="store_true",
+        help="Use the risk-chapter rubric when evaluating a chapter.",
+    )
     args = parser.parse_args()
 
     if args.phase == "foundation":
         result = evaluate_foundation()
         score_key = "overall_score"
     elif args.chapter is not None:
-        result = evaluate_chapter(args.chapter)
+        result = evaluate_chapter(args.chapter, include_risk=args.risk)
         score_key = "overall_score"
     elif args.full:
-        result = evaluate_full()
+        result = evaluate_full(args.evidence)
         score_key = "novel_score"
 
     # Print structured output

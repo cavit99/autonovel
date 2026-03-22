@@ -1,134 +1,119 @@
 #!/usr/bin/env python3
-"""Generate outline.md from seed + world + characters + mystery + craft."""
-import os
+"""Compatibility wrapper that renders legacy outline.md from PR2 artifacts."""
+
+from __future__ import annotations
+
+import argparse
+import json
 import sys
 from pathlib import Path
-from dotenv import load_dotenv
+
+from planning_split import (
+    normalize_thread_registry,
+    parse_arc_outline,
+    parse_chapter_cards,
+    render_legacy_outline,
+)
+from project_paths import ensure_parent_dir, planning_artifact_path
 
 BASE_DIR = Path(__file__).parent
-load_dotenv(BASE_DIR / ".env")
+DEFAULT_OUTPUT = planning_artifact_path("outline", BASE_DIR)
 
-WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
 
-def call_writer(prompt, max_tokens=16000):
-    import httpx
-    headers = {
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "context-1m-2025-08-07",
-        "content-type": "application/json",
-    }
-    payload = {
-        "model": WRITER_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.5,
-        "system": (
-            "You are a novel architect with deep knowledge of Save the Cat beats, "
-            "Sanderson's plotting principles, Dan Harmon's Story Circle, and MICE Quotient. "
-            "You build outlines that an author can draft from without inventing structure "
-            "on the fly. Every chapter has beats, emotional arc, and try-fail cycle type. "
-            "You never use AI slop words. You write in clean, direct prose."
-        ),
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=600)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+def generate_arc(*, output_path: Path) -> dict[str, object]:
+    from gen_arc import generate_arc as _generate_arc
 
-seed = (BASE_DIR / "seed.txt").read_text()
-world = (BASE_DIR / "world.md").read_text()
-characters = (BASE_DIR / "characters.md").read_text()
-mystery = (BASE_DIR / "MYSTERY.md").read_text()
-craft = (BASE_DIR / "CRAFT.md").read_text()
+    return _generate_arc(output_path=output_path)
 
-# Voice Part 2 only
-voice = (BASE_DIR / "voice.md").read_text()
-voice_lines = voice.split('\n')
-part2_start = next(i for i, l in enumerate(voice_lines) if 'Part 2' in l)
-voice_part2 = '\n'.join(voice_lines[part2_start:])
 
-prompt = f"""Build a complete chapter outline for this fantasy novel. Target: 22-26 chapters,
-~80,000 words total (~3,000-4,000 words per chapter).
+def generate_chapter_cards(*, output_path: Path) -> list[dict[str, object]]:
+    from gen_chapter_cards import generate_chapter_cards as _generate_chapter_cards
 
-SEED CONCEPT:
-{seed}
+    return _generate_chapter_cards(output_path=output_path)
 
-THE CENTRAL MYSTERY (author's eyes only -- reader discovers gradually):
-{mystery}
 
-WORLD BIBLE:
-{world}
+def generate_thread_registry(*, output_path: Path) -> list[dict[str, object]]:
+    from gen_thread_registry import generate_thread_registry as _generate_thread_registry
 
-CHARACTER REGISTRY:
-{characters}
+    return _generate_thread_registry(output_path=output_path)
 
-VOICE (tone and register):
-{voice_part2}
 
-CRAFT REFERENCE (structures to follow):
-{craft}
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Compatibility wrapper for the legacy outline.md pipeline"
+    )
+    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Where to write outline.md")
+    parser.add_argument("--arc-output", type=Path, default=planning_artifact_path("arc_outline", BASE_DIR), help="Arc output path")
+    parser.add_argument(
+        "--cards-output",
+        type=Path,
+        default=planning_artifact_path("chapter_cards", BASE_DIR),
+        help="Chapter cards output path",
+    )
+    parser.add_argument(
+        "--threads-output",
+        type=Path,
+        default=planning_artifact_path("thread_registry", BASE_DIR),
+        help="Thread registry output path",
+    )
+    parser.add_argument(
+        "--refresh-new-planning",
+        action="store_true",
+        help="Regenerate arc_outline.md, chapter_cards.md, and thread_registry.json before rendering outline.md",
+    )
+    return parser
 
-BUILD THE OUTLINE WITH:
 
-## Act Structure
-Map out Act I (0-23%), Act II Part 1 (23-50%), Act II Part 2 (50-77%), Act III (77-100%).
-State the percentage marks for the key novel.
+def load_existing_planning_artifacts(
+    arc_path: Path, cards_path: Path, threads_path: Path
+) -> tuple[dict[str, object], list[dict[str, object]], list[dict[str, object]]]:
+    missing = [path for path in (arc_path, cards_path, threads_path) if not path.exists()]
+    if missing:
+        missing_lines = "\n".join(f"- {path}" for path in missing)
+        raise FileNotFoundError(
+            "Missing required planning artifact(s):\n"
+            f"{missing_lines}\n"
+            "gen_outline.py is read-only by default. Generate arc_outline.md, chapter_cards.md, "
+            "and thread_registry.json first, or rerun with --refresh-new-planning."
+        )
 
-## Chapter-by-Chapter Outline
+    arc = parse_arc_outline(arc_path.read_text())
+    cards = parse_chapter_cards(cards_path.read_text())
+    try:
+        threads = normalize_thread_registry(json.loads(threads_path.read_text()))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Could not parse existing thread registry JSON at {threads_path}: {exc}") from exc
+    return arc, cards, threads
 
-For EACH chapter, provide:
-### Ch N: [Title]
-- **POV:** (always Cass, third-person limited)
-- **Location:** Which districts/locations
-- **Save the Cat beat:** Which beat this chapter serves (Opening Image, Setup, Catalyst, etc.)
-- **% mark:** Where this falls in the novel
-- **Emotional arc:** Starting emotion → ending emotion
-- **Try-fail cycle:** Yes-but / No-and / No-but / Yes-and
-- **Beats:** 3-5 specific scene beats that must happen
-- **Plants:** Foreshadowing elements planted in this chapter
-- **Payoffs:** Foreshadowing elements that pay off here
-- **Character movement:** What changes for Cass (or other characters) by chapter's end
-- **The lie:** How Cass's lie ("if I master the system, I can fix things from inside") is
-  reinforced or challenged in this chapter
-- **~Word count target:** for pacing
 
-## Foreshadowing Ledger
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
-A table tracking every planted thread:
-| Thread | Planted (Ch) | Reinforced (Ch) | Payoff (Ch) | Type |
+    try:
+        if args.refresh_new_planning:
+            print("Running gen_arc.py compatibility step...", file=sys.stderr)
+            arc = generate_arc(output_path=args.arc_output)
+            print("Running gen_chapter_cards.py compatibility step...", file=sys.stderr)
+            cards = generate_chapter_cards(output_path=args.cards_output)
+            print("Running gen_thread_registry.py compatibility step...", file=sys.stderr)
+            threads = generate_thread_registry(output_path=args.threads_output)
+        else:
+            arc, cards, threads = load_existing_planning_artifacts(
+                args.arc_output, args.cards_output, args.threads_output
+            )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
 
-Include at LEAST 15 threads. Types: object, dialogue, action, symbolic, structural.
+    title = arc.get("title", "Outline")
+    outline = render_legacy_outline(title, arc, cards, threads)
+    ensure_parent_dir(args.output)
+    args.output.write_text(outline + "\n")
+    print(f"Saved legacy outline to {args.output}", file=sys.stderr)
+    print(outline)
+    return 0
 
-KEY PLOT ARCHITECTURE:
 
-Act I (Ch 1-6ish): Establish Cass's world, his pain, his gift, the Academy, his family.
-Plant the mystery early (the locked room, the forbidden bells, father's tremor).
-Catalyst: something forces Cass to investigate Perin's contract.
-
-Act II Part 1 (Ch 7-12ish): Investigation. Cass digs into the Corda contract, encounters
-Maret, allies with Torvald and Lenne, begins hearing the harmonic more clearly.
-Midpoint: Cass learns a partial truth that changes his approach (false victory or defeat).
-
-Act II Part 2 (Ch 13-18ish): Pressure mounts. Maret moves against the Bellwrights.
-Father's secrets begin to surface. Cass's lie is increasingly unsustainable.
-All Is Lost: Cass confronts his father and learns the full truth.
-
-Act III (Ch 19-24ish): Cass understands the question. Must choose how to answer.
-The climax plays out using the established intervals of Tonal Law.
-The resolution shows the aftermath of his choice.
-
-CONSTRAINTS:
-- The climax must be mechanically resolvable using established Tonal Law intervals
-- Cass's investigation should feel like a mystery plot overlaid on a coming-of-age arc
-- The Stability Trap: bad things must stay bad. Not everything resolves cleanly.
-- Perin must appear in person at some point (not just in memory/letters)
-- At least 3 chapters should be "quiet" -- character-focused, low-action, emotionally rich
-- Vary the try-fail types: 60%+ should be "yes-but" or "no-and"
-- The foreshadowing ledger must have plant-to-payoff distances of at least 3 chapters
-"""
-
-print("Calling writer model...", file=sys.stderr)
-result = call_writer(prompt)
-print(result)
+if __name__ == "__main__":
+    raise SystemExit(main())
