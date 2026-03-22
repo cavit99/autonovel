@@ -589,6 +589,9 @@ def apply_patch_revision(chapter_num: int, brief_path: Path, risk_set: set[int])
     if post_score < pre_score and chapter_path.exists():
         chapter_path.write_text(pre_text, encoding="utf-8")
         step("Patch revision regressed; restored pre-revision chapter text")
+        restored_score, _restored_eval = evaluate_chapter(chapter_num, include_risk=chapter_num in risk_set)
+        step(f"Restored Chapter {chapter_num} re-evaluated at {restored_score}")
+        return False
     return True
 
 

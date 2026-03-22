@@ -443,6 +443,67 @@ class OrchestratorManifestTests(unittest.TestCase):
             commands.index("apply_edits.py 1"),
         )
 
+    def test_apply_patch_revision_re_evaluates_restored_text_after_regression(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            chapters_dir = root / "chapters"
+            eval_logs_dir = root / "eval_logs"
+            chapters_dir.mkdir(parents=True)
+            eval_logs_dir.mkdir(parents=True)
+
+            chapter_path = chapters_dir / "ch_01.md"
+            original_text = "# Chapter 1\n\nBEFORE PATCH\n"
+            chapter_path.write_text(original_text, encoding="utf-8")
+            brief_path = root / "brief.md"
+            brief_path.write_text(
+                "# Brief\n\n## Patch Directives\n- replace: \"BEFORE PATCH\" => \"AFTER PATCH\"\n",
+                encoding="utf-8",
+            )
+
+            scores = iter([6.0, 5.5, 6.0])
+            eval_call_count = 0
+
+            def fake_uv_run(script, timeout=600, check=False):
+                if script == f"patch_revision.py 1 {brief_path} --plan-only":
+                    return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+                if script == "apply_edits.py 1":
+                    chapter_path.write_text("# Chapter 1\n\nAFTER PATCH\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+                raise AssertionError(f"Unexpected command: {script}")
+
+            def fake_evaluate_chapter(chapter_num, include_risk=False):
+                nonlocal eval_call_count
+                eval_call_count += 1
+                score = next(scores)
+                log_path = eval_logs_dir / f"20260322_000000_ch01_{eval_call_count}.json"
+                log_path.write_text(
+                    json.dumps(
+                        {
+                            "overall_score": score,
+                            "text_snapshot": chapter_path.read_text(encoding="utf-8"),
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                return score, {"eval_log": str(log_path)}
+
+            with (
+                patch.object(run_pipeline, "CHAPTERS_DIR", chapters_dir),
+                patch.object(run_pipeline, "EVAL_LOGS_DIR", eval_logs_dir),
+                patch.object(run_pipeline, "uv_run", side_effect=fake_uv_run),
+                patch.object(run_pipeline, "evaluate_chapter", side_effect=fake_evaluate_chapter),
+            ):
+                changed = run_pipeline.apply_patch_revision(1, brief_path, set())
+                latest_log = run_pipeline.latest_chapter_eval_logs()[1]
+
+            latest_payload = json.loads(latest_log.read_text(encoding="utf-8"))
+            self.assertFalse(changed)
+            self.assertEqual(eval_call_count, 3)
+            self.assertEqual(chapter_path.read_text(encoding="utf-8"), original_text)
+            self.assertIn("BEFORE PATCH", latest_payload["text_snapshot"])
+            self.assertNotIn("AFTER PATCH", latest_payload["text_snapshot"])
+
     def test_revision_can_apply_multiple_patch_briefs_in_one_cycle(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
