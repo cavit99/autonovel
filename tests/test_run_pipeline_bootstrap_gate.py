@@ -83,6 +83,7 @@ class RunPipelineBootstrapGateTests(unittest.TestCase):
                 from_scratch=False,
                 approve_bootstrap=False,
                 phase="drafting",
+                max_foundation_iters=run_pipeline.MAX_FOUNDATION_ITERS,
                 max_cycles=None,
             )
 
@@ -114,12 +115,14 @@ class RunPipelineBootstrapGateTests(unittest.TestCase):
                 from_scratch=False,
                 approve_bootstrap=True,
                 phase="foundation",
+                max_foundation_iters=3,
                 max_cycles=None,
             )
 
-            def fake_run_foundation(state):
+            def fake_run_foundation(state, *, max_iters):
                 self.assertTrue(state["bootstrap_complete"])
                 self.assertTrue(state["bootstrap_approved"])
+                self.assertEqual(max_iters, 3)
                 state["phase"] = "drafting"
                 return state
 
@@ -140,6 +143,11 @@ class RunPipelineBootstrapGateTests(unittest.TestCase):
                 run_pipeline.run_pipeline(args)
 
         run_foundation_mock.assert_called_once()
+
+    def test_positive_int_arg_rejects_non_positive_values(self):
+        self.assertEqual(run_pipeline.positive_int_arg("3"), 3)
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "positive integer"):
+            run_pipeline.positive_int_arg("0")
 
 
 if __name__ == "__main__":

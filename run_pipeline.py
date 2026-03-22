@@ -916,7 +916,7 @@ def run_foundation_bootstrap(state: dict) -> dict:
     return state
 
 
-def run_foundation(state: dict) -> dict:
+def run_foundation(state: dict, *, max_iters: int = MAX_FOUNDATION_ITERS) -> dict:
     banner("PHASE 1: FOUNDATION", "=")
 
     state = run_foundation_bootstrap(state)
@@ -929,7 +929,7 @@ def run_foundation(state: dict) -> dict:
     generated_paths = foundation_structural_generated_files()
     state["current_focus"] = "structural_planning"
 
-    for i in range(iteration + 1, MAX_FOUNDATION_ITERS + 1):
+    for i in range(iteration + 1, max_iters + 1):
         banner(f"Foundation Iteration {i}", "-")
         state["iteration"] = i
 
@@ -978,7 +978,7 @@ def run_foundation(state: dict) -> dict:
             step(f"Foundation score {best_score} >= {FOUNDATION_THRESHOLD} — PASSED")
             break
     else:
-        step(f"WARNING: max iterations ({MAX_FOUNDATION_ITERS}) reached with score {best_score}")
+        step(f"WARNING: max iterations ({max_iters}) reached with score {best_score}")
 
     total = planned_chapter_count(BASE_DIR)
     state["chapters_total"] = total
@@ -1300,7 +1300,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
     for phase in phases:
         try:
             if phase == "foundation":
-                state = run_foundation(state)
+                state = run_foundation(state, max_iters=args.max_foundation_iters)
                 if bootstrap_approval_pending(state):
                     break
             elif phase == "drafting":
@@ -1345,6 +1345,13 @@ def run_pipeline(args: argparse.Namespace) -> None:
     print(f"  Commit:     {git_short_hash()}")
 
 
+def positive_int_arg(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Autonovel pipeline orchestrator — foundation to export",
@@ -1368,6 +1375,12 @@ Examples:
         help="Approve the generated bootstrap artifacts and continue into structural planning",
     )
     parser.add_argument("--phase", choices=PHASE_ORDER, help="Run only a specific phase")
+    parser.add_argument(
+        "--max-foundation-iters",
+        type=positive_int_arg,
+        default=MAX_FOUNDATION_ITERS,
+        help=f"Maximum foundation iterations (default: {MAX_FOUNDATION_ITERS})",
+    )
     parser.add_argument("--max-cycles", type=int, default=None, help=f"Maximum revision cycles (default: {MAX_REVISION_CYCLES})")
     args = parser.parse_args()
     run_pipeline(args)
