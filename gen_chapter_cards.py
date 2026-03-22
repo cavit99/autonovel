@@ -8,7 +8,11 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test runners
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 from planning_split import (
     derive_chapter_cards_from_outline,
@@ -126,7 +130,8 @@ def generate_chapter_cards(*, output_path: Path = DEFAULT_OUTPUT) -> list[dict[s
         arc = read_required(BASE_DIR / "arc_outline.md")
         raw = call_writer(build_prompt(seed, world, characters, perspective, voice, arc))
         cards = normalize_chapter_cards(extract_json_object(raw))
-    except Exception:
+    except Exception as exc:
+        print(f"WARNING: gen_chapter_cards.py falling back to derived chapter cards: {exc}", file=sys.stderr)
         cards = derive_cards()
 
     output_path.write_text(render_chapter_cards(cards) + "\n")

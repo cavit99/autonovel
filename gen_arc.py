@@ -8,7 +8,11 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test runners
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 from planning_split import (
     derive_arc_from_outline,
@@ -113,7 +117,8 @@ def generate_arc(*, output_path: Path = DEFAULT_OUTPUT) -> dict[str, object]:
         voice = read_required(BASE_DIR / "voice.md")
         raw = call_writer(build_prompt(seed, world, characters, perspective, mystery, voice))
         arc = normalize_arc_payload(extract_json_object(raw))
-    except Exception:
+    except Exception as exc:
+        print(f"WARNING: gen_arc.py falling back to derived arc outline: {exc}", file=sys.stderr)
         arc = derive_arc()
 
     output_path.write_text(render_arc_outline(arc) + "\n")

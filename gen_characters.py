@@ -13,7 +13,11 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test runners
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 from foundation_mind import (
     extract_json_object,
@@ -115,9 +119,13 @@ Rules: Want and Need must be IN TENSION. Lie statable in one sentence.
 7. Metaphor domain  8. Directness vs indirectness
 Test: Remove dialogue tags. Can you tell who's speaking?
 
-BUILD THE REGISTRY WITH AT LEAST THESE CHARACTERS:
+BUILD THE REGISTRY AROUND THE CAST THE SEED ACTUALLY IMPLIES.
+Preserve any names, titles, factions, and relationships already present in the seed/world/voice.
+Do NOT import characters, surnames, or setting details from some other project.
 
-1. **Cass Bellwright** (protagonist, POV character)
+Develop at least these story roles, using the novel's actual names:
+
+1. **The protagonist / primary viewpoint character**
    - Full wound/want/need/lie chain
    - Three sliders with justification
    - Arc type (positive/negative/flat)
@@ -126,32 +134,28 @@ BUILD THE REGISTRY WITH AT LEAST THESE CHARACTERS:
    - At least 2 secrets
    - Key relationships mapped
 
-2. **Eddan Bellwright** (father)
-   - Same depth as Cass
-   - His relationship to the sealed journals, the shaking hands
-   - What he knows and what he's hiding
+2. **The closest pressure character**
+   - A parent, sibling, mentor, spouse, patron, rival, or intimate counterpart
+   - Same depth as the protagonist
+   - What they know, what they hide, and how they exert pressure
 
-3. **Perin Bellwright** (brother)
-   - Even though he's absent for much of the story, he needs full depth
-   - What actually happened with the Corda contract
-   - His presence through absence
+3. **The primary opposing force**
+   - A person, faction representative, or intimate antagonist
+   - Not a cardboard villain; give them an understandable logic
+   - Their own wound/want/need/lie if they are a major on-page character
 
-4. **Maret Corda** (antagonist)
-   - Not a villain -- someone whose interests conflicts with Cass's
-   - Her own wound/want/need/lie (she should be understandable)
+4. **The institutional or systemic pressure figure**
+   - The character who personifies the rules, hierarchy, or machine of the world
+   - If the story has no such figure, replace this slot with the next-most-essential major character
 
-5. **Rector Suvaine** (Academy Chancellor)
-   - The institutional antagonist -- the system personified
-   - She believes she's protecting Cantamura
+5. **The absent but plot-shaping figure**
+   - Someone whose off-page choices, disappearance, debt, death, betrayal, or legacy still drives the story
+   - If no absent figure matters, use the next-most-essential supporting character instead
 
-6. **Torvald Hess** (Compact leader)
-   - The outsider perspective on the system
-   - What he represents thematically
-
-7. **At least 1-2 additional characters** that the story needs
-   - A peer/friend for Cass at the Academy?
-   - Someone at the House of Corda who knows Perin?
-   - A Court Singer with divided loyalties?
+6. **At least 2 additional characters** the story materially needs
+   - A peer, confidant, foil, or rival
+   - Someone tied to the story's family/community/power structure
+   - Anyone else required for the plot to function on the page
 
 FOR EACH CHARACTER INCLUDE:
 - Name, age, role
@@ -169,9 +173,10 @@ IMPORTANT:
 - Characters must INTERCONNECT. Their wants should conflict with each other.
 - Every secret should be something that would CHANGE the story if revealed.
 - Speech patterns must be distinct enough to pass the no-tags test.
-- Give Cass habits that come from his gift (the pain, the constant listening).
-- The father's shaking hands should connect to something specific.
-- Maret Corda should be as fully realized as Cass -- a worthy antagonist.
+- Preserve seed-specific names and invented terms when they already exist.
+- If the seed implies a gift, curse, wound, profession, or bodily cost, let it shape habits, perception, and dialogue.
+- If family pressure is central, make close relatives or caretakers as fully realized as the protagonist.
+- The main antagonist or opposing force should be as fully realized as the protagonist -- a worthy source of pressure.
 - Target ~3000-4000 words. Dense character work, not padding.
 """
 

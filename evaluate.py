@@ -48,6 +48,11 @@ ANTHROPIC_BETA = "context-1m-2025-08-07"
 CHAPTERS_DIR = BASE_DIR / "chapters"
 EVAL_LOG_DIR = BASE_DIR / "eval_logs"
 EVAL_LOG_DIR.mkdir(exist_ok=True)
+FULL_EVIDENCE_MAX_TOKENS = 12000
+SUMMARY_MODE_FULL_WARNING = (
+    "WARNING: --full without --evidence uses degraded summary-mode judging. "
+    "Prefer --full --evidence <eval_logs/evidence_pack.json> for normalized full-novel evaluation."
+)
 
 
 # ---- Mechanical Slop Detection (no LLM needed) ----
@@ -434,7 +439,7 @@ CROSS-CHECKS (perform these before scoring):
      share the same sentence structures
 2. Check for missing NEGATIVE SPACE -- what's absent?
    - Are there gaps in the magic system that would block a specific
-     plot scene? (e.g., can Cass hear lies in written documents?
+     plot scene? (e.g., can the protagonist's core ability affect written documents?
      What happens during the climax -- what rule resolves it?)
    - Are there characters needed for the plot who don't exist?
    - Are there scenes the outline demands that the world can't support?
@@ -648,8 +653,8 @@ Score these dimensions:
 
 - character_voice: Remove all dialogue tags mentally. Can you tell who's
   speaking? Do characters ever sound alike? Does dialogue read as speech
-  or as written prose? Does Cass sound like a specific 14-year-old, or
-  like "young protagonist"? Does anyone say something surprising -- not
+  or as written prose? Does the primary viewpoint character sound age-
+  and background-specific, or like "young protagonist"? Does anyone say something surprising -- not
   just the right thing, but a REAL thing? Characters who never stumble,
   hesitate, or say something slightly wrong are AI-pattern characters.
 
@@ -659,7 +664,7 @@ Score these dimensions:
 
 - prose_quality: Sentence variety (measure: do 3+ consecutive sentences
   start the same way?). Specificity (concrete nouns > abstract).
-  Metaphors from Cass's experience, not from a thesaurus. Show-don't-tell
+  Metaphors from the viewpoint character's experience, not from a thesaurus. Show-don't-tell
   at emotional peaks. QUOTE the weakest sentence and explain why. Also
   check for: repeated phrases, leaned-on constructions, paragraphs that
   could be cut without loss.
@@ -1054,14 +1059,24 @@ def evaluate_full(evidence_path: str | None = None):
             thread_registry=layers["thread_registry"][:2500],
             evidence=render_evidence_pack(evidence_pack),
         )
-        raw = call_judge(prompt)
-        return normalize_full_result(parse_json_response(raw))
+        raw = call_judge(prompt, max_tokens=FULL_EVIDENCE_MAX_TOKENS)
+        result = normalize_full_result(parse_json_response(raw))
+        result.setdefault("evaluation_mode", "evidence")
+        return result
 
+    print(SUMMARY_MODE_FULL_WARNING, file=sys.stderr)
     layers = load_layer_files()
     chapters = load_all_chapters()
 
     if not chapters:
-        return {"error": "No chapters found", "novel_score": 0.0}
+        return normalize_full_result(
+            {
+                "error": "No chapters found",
+                "novel_score": 0.0,
+                "warning": SUMMARY_MODE_FULL_WARNING,
+                "evaluation_mode": "summary_fallback",
+            }
+        )
 
     # Build chapter summaries (first/last 500 chars of each)
     summaries = []
@@ -1084,7 +1099,10 @@ def evaluate_full(evidence_path: str | None = None):
         chapter_summaries="\n".join(summaries),
     )
     raw = call_judge(prompt)
-    return parse_json_response(raw)
+    result = normalize_full_result(parse_json_response(raw))
+    result.setdefault("warning", SUMMARY_MODE_FULL_WARNING)
+    result.setdefault("evaluation_mode", "summary_fallback")
+    return result
 
 
 # --- Main ---

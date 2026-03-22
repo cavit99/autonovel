@@ -18,6 +18,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
     def load_dotenv(*_args, **_kwargs):
         return False
 
+from manifest_tools import derive_title
 from patch_revision import default_patch_path, generate_patch_plan
 from revision_patching import (
     BASE_DIR,
@@ -33,6 +34,11 @@ load_dotenv(BASE_DIR / ".env")
 WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+
+
+def project_reference(base_dir: Path = BASE_DIR) -> str:
+    title = derive_title(base_dir).strip()
+    return f'"{title}"' if title else "this novel"
 
 
 def call_writer(prompt: str, max_tokens: int = 16000) -> str:
@@ -87,7 +93,7 @@ def load_full_revision_context(ch_num: int, brief_file: str) -> dict[str, str | 
 
 
 def build_full_revision_prompt(ch_num: int, context: dict[str, str | Path]) -> str:
-    return f"""Rewrite Chapter {ch_num} of "The Second Son of the House of Bells."
+    return f"""Rewrite Chapter {ch_num} of {project_reference()}.
 
 REVISION BRIEF (follow this exactly):
 {context["brief"]}

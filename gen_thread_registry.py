@@ -9,7 +9,11 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test runners
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 from planning_split import (
     derive_thread_registry_from_outline,
@@ -103,7 +107,8 @@ def generate_thread_registry(*, output_path: Path = DEFAULT_OUTPUT) -> list[dict
         outline = read_text_if_exists(BASE_DIR / "outline.md")
         raw = call_writer(build_prompt(arc, chapter_cards, outline))
         threads = normalize_thread_registry(extract_json_object(raw))
-    except Exception:
+    except Exception as exc:
+        print(f"WARNING: gen_thread_registry.py falling back to derived thread registry: {exc}", file=sys.stderr)
         threads = derive_threads()
 
     output_path.write_text(json.dumps(threads, indent=2) + "\n")

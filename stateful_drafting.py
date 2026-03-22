@@ -8,6 +8,7 @@ import os
 import re
 from pathlib import Path
 
+from manifest_tools import derive_title
 from planning_split import extract_json_object, normalize_thread_registry, parse_chapter_cards
 
 SCENE_OPTION_FIELDS = (
@@ -1066,6 +1067,11 @@ def load_character_engine(base_dir: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+def project_reference(base_dir: Path) -> str:
+    title = derive_title(base_dir).strip()
+    return f'"{title}"' if title else "this novel"
+
+
 def build_legacy_prompt(base_dir: Path, chapter_num: int) -> str:
     voice = read_text_if_exists(base_dir / "voice.md")
     world = read_text_if_exists(base_dir / "world.md")
@@ -1076,7 +1082,7 @@ def build_legacy_prompt(base_dir: Path, chapter_num: int) -> str:
     next_chapter = extract_next_chapter_outline(outline, chapter_num)
     prev_tail = previous_chapter_tail(base_dir, chapter_num)
 
-    return f"""Write Chapter {chapter_num} of "The Second Son of the House of Bells."
+    return f"""Write Chapter {chapter_num} of {project_reference(base_dir)}.
 
 VOICE DEFINITION (follow this exactly):
 {voice}
@@ -1098,16 +1104,16 @@ CHARACTER REGISTRY (reference for speech patterns and behavior):
 
 WRITING INSTRUCTIONS:
 1. Write the COMPLETE chapter. Target ~3,200 words. Do not truncate or summarize.
-2. Third-person limited, past tense, locked to Cass's POV.
+2. Stay in the chapter's governing viewpoint. Default to close third-person limited, past tense unless the planning docs clearly establish another stance.
 3. Hit ALL numbered beats from the outline in order.
 4. Plant ALL foreshadowing elements listed under "Plants."
-5. Show sensory detail: what Cass hears, smells, feels physically.
-6. The under-note causes specific physical pain (needle behind left eye, not vague discomfort).
+5. Show sensory detail filtered through the viewpoint character's body, trade, obsessions, and lived environment.
+6. If the story's speculative or psychological pressure has a bodily cost, render that cost specifically rather than vaguely.
 7. Dialogue follows the speech patterns defined in characters.md.
 8. No banned words from voice.md Part 1 guardrails.
 9. No AI fiction tells: no "a sense of," no "couldn't help but feel," no "eyes widened."
 10. Vary sentence length. Short sentences for impact. Longer ones to build.
-11. Metaphors from Cass's experience: sound, bronze, craft, the body's response to pitch.
+11. Metaphors should come from the viewpoint character's experience and social world, not from generic fantasy narration.
 12. Trust the reader. Don't explain what scenes mean. Let them land.
 13. Start the chapter in scene, not with exposition. End on a moment, not a summary.
 
@@ -1128,8 +1134,8 @@ PATTERNS TO AVOID (these have been flagged in previous chapters):
     paragraphs of similar length. Include at least one 1-2 sentence
     paragraph and one 6+ sentence paragraph.
 21. END the chapter differently from previous chapters. Do NOT end with
-    Cass outside listening to his father work. Find the ending that
-    belongs to THIS chapter specifically.
+    a recycled image or cadence. Find the ending that belongs to THIS
+    chapter specifically.
 22. INCLUDE at least one moment that surprises -- a character saying
     the wrong thing, an emotional beat arriving early or late, a detail
     that doesn't fit the expected pattern. Predictable excellence is
@@ -1139,7 +1145,8 @@ PATTERNS TO AVOID (these have been flagged in previous chapters):
     summary (narrator compressing time).
 24. DIALOGUE should sound like speech, not prose. Characters should
     occasionally stumble, interrupt, trail off, or say something
-    slightly wrong. A 14-year-old does not speak in polished epigrams.
+    slightly wrong. Young or inexperienced characters should not speak
+    in polished epigrams unless the planning docs clearly support it.
 
 Write the chapter now. Full text, beginning to end.
 """

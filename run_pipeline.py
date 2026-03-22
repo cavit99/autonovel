@@ -46,13 +46,43 @@ CHAPTER_THRESHOLD = 6.0
 RISK_INTERESTINGNESS_FLOOR = 7.0
 RISK_COHERENCE_FLOOR = 5.0
 CRITICAL_SCENE_THRESHOLD = 6.3
+PATCH_REVISION_SCORE_CUTOFF = 7.0
 MAX_FOUNDATION_ITERS = 20
 MAX_CHAPTER_ATTEMPTS = 5
 MIN_REVISION_CYCLES = 3
 MAX_REVISION_CYCLES = 6
+MAX_PATCH_REVISIONS_PER_CYCLE = 3
 PLATEAU_DELTA = 0.3
 
 PHASE_ORDER = ["foundation", "drafting", "revision", "review", "export"]
+PIPELINE_GIT_STAGE_PATHSPECS = (
+    "world.md",
+    "characters.md",
+    "character_engine.json",
+    "perspective.md",
+    "voice.md",
+    "voice_discovery.json",
+    "arc_outline.md",
+    "chapter_cards.md",
+    "thread_registry.json",
+    "outline.md",
+    "canon.md",
+    "manifest.json",
+    "results.tsv",
+    "state.json",
+    "manuscript.md",
+    "arc_summary.md",
+    "reviews.md",
+    "typeset/novel.tex",
+    "typeset/novel.pdf",
+    ":(glob)chapters/ch_*.md",
+    ":(glob)chapters/variants/ch_*.md",
+    ":(glob)briefs/ch*_*.md",
+    ":(glob)scene_options/ch_*.json",
+    ":(glob)state/story_state/ch_*.json",
+    ":(glob)edit_logs/*.json",
+    ":(glob)eval_logs/*.json",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +167,30 @@ def run_tool(cmd: str, timeout: int = 600, check: bool = False) -> subprocess.Co
     return result
 
 
+def run_tool_args(args: list[str], timeout: int = 600, check: bool = False) -> subprocess.CompletedProcess:
+    step(f"RUN: {shlex.join(args)}")
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(BASE_DIR),
+        )
+    except subprocess.TimeoutExpired:
+        print(f"    ERROR: timed out after {timeout}s")
+        result = subprocess.CompletedProcess(args, returncode=-1, stdout="", stderr="TIMEOUT")
+
+    if result.returncode != 0:
+        print(f"    WARN: exit code {result.returncode}")
+        stderr_preview = (result.stderr or "")[:300]
+        if stderr_preview:
+            print(f"    stderr: {stderr_preview}")
+        if check:
+            raise subprocess.CalledProcessError(result.returncode, args, result.stdout, result.stderr)
+    return result
+
+
 def uv_run(script: str, timeout: int = 600, check: bool = False) -> subprocess.CompletedProcess:
     return run_tool(f"uv run python {script}", timeout=timeout, check=check)
 
@@ -158,20 +212,39 @@ def require_success(result: subprocess.CompletedProcess, context: str) -> subpro
 # Helpers: git operations
 # ---------------------------------------------------------------------------
 
+def git_pathspec_has_matches(pathspec: str) -> bool:
+    result = run_tool_args(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", pathspec],
+        timeout=30,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def pipeline_stage_pathspecs() -> list[str]:
+    return [pathspec for pathspec in PIPELINE_GIT_STAGE_PATHSPECS if git_pathspec_has_matches(pathspec)]
+
+
 def git_add_commit(message: str) -> str:
-    run_tool("git add -A")
-    result = run_tool(f'git commit -m "{message}" --allow-empty')
+    stage_pathspecs = pipeline_stage_pathspecs()
+    if stage_pathspecs:
+        require_success(
+            run_tool_args(["git", "add", "-A", "--", *stage_pathspecs], timeout=120),
+            "git add",
+        )
+    else:
+        step("GIT: no pipeline artifact paths matched for staging")
+    result = run_tool_args(["git", "commit", "-m", message, "--allow-empty"], timeout=120)
     if result.returncode != 0:
         step("GIT: nothing to commit or commit failed")
         return ""
-    hash_result = run_tool("git rev-parse --short HEAD")
+    hash_result = run_tool_args(["git", "rev-parse", "--short", "HEAD"], timeout=30)
     commit_hash = hash_result.stdout.strip()
     step(f"GIT COMMIT: {commit_hash} — {message}")
     return commit_hash
 
 
 def git_short_hash() -> str:
-    result = run_tool("git rev-parse --short HEAD")
+    result = run_tool_args(["git", "rev-parse", "--short", "HEAD"], timeout=30)
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
@@ -198,6 +271,71 @@ def restore_path(path: Path) -> None:
 def restore_paths(paths: list[Path]) -> None:
     for path in paths:
         restore_path(path)
+
+
+def clear_directory_contents(path: Path) -> list[Path]:
+    removed: list[Path] = []
+    if not path.exists():
+        return removed
+    for child in sorted(path.iterdir()):
+        if child.name == ".gitkeep":
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+        removed.append(child)
+    return removed
+
+
+def generated_planning_files() -> list[Path]:
+    # These are regenerated from seed.txt during the foundation phase.
+    return [
+        BASE_DIR / "world.md",
+        BASE_DIR / "characters.md",
+        BASE_DIR / "character_engine.json",
+        BASE_DIR / "perspective.md",
+        BASE_DIR / "voice.md",
+        BASE_DIR / "voice_discovery.json",
+        BASE_DIR / "arc_outline.md",
+        BASE_DIR / "chapter_cards.md",
+        BASE_DIR / "thread_registry.json",
+        BASE_DIR / "outline.md",
+        BASE_DIR / "canon.md",
+    ]
+
+
+def clear_from_scratch_artifacts() -> list[Path]:
+    removed: list[Path] = []
+
+    for path in generated_planning_files():
+        if path.exists():
+            path.unlink()
+            removed.append(path)
+
+    for path in (
+        MANIFEST_PATH,
+        RESULTS_FILE,
+        BASE_DIR / "arc_summary.md",
+        BASE_DIR / "manuscript.md",
+        BASE_DIR / "reviews.md",
+    ):
+        if path.exists():
+            path.unlink()
+            removed.append(path)
+
+    for path in sorted(CHAPTERS_DIR.glob("ch_*.md")):
+        path.unlink()
+        removed.append(path)
+
+    for path in sorted(BRIEFS_DIR.glob("ch[0-9][0-9]_*.md")):
+        path.unlink()
+        removed.append(path)
+
+    for directory in (SCENE_OPTIONS_DIR, STORY_STATE_DIR, EDIT_LOGS_DIR, EVAL_LOGS_DIR, VARIANTS_DIR):
+        removed.extend(clear_directory_contents(directory))
+
+    return removed
 
 
 # ---------------------------------------------------------------------------
@@ -325,6 +463,135 @@ def evidence_pack_path() -> Path:
     return EVAL_LOGS_DIR / "evidence_pack.json"
 
 
+def story_state_snapshot_path(chapter_num: int) -> Path:
+    return STORY_STATE_DIR / f"ch_{chapter_num:02d}.json"
+
+
+def snapshot_story_state(chapter_num: int) -> None:
+    require_success(uv_run(f"advance_state.py --chapter {chapter_num}", timeout=300), f"advance_state.py --chapter {chapter_num}")
+
+
+def ensure_story_state_snapshot(chapter_num: int) -> None:
+    if chapter_num < 1:
+        return
+    if story_state_snapshot_path(chapter_num).exists():
+        return
+    snapshot_story_state(chapter_num)
+
+
+def load_json_file(path: Path) -> dict | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def latest_full_eval_log() -> Path | None:
+    fulls = sorted(EVAL_LOGS_DIR.glob("*_full.json"))
+    return fulls[-1] if fulls else None
+
+
+def full_eval_weakest_chapter() -> int | None:
+    full_eval_path = latest_full_eval_log()
+    if full_eval_path is None:
+        return None
+    full_eval = load_json_file(full_eval_path) or {}
+    weakest = full_eval.get("weakest_chapter")
+    return weakest if isinstance(weakest, int) and weakest > 0 else None
+
+
+def latest_chapter_eval_logs() -> dict[int, Path]:
+    latest_logs: dict[int, Path] = {}
+    for path in sorted(EVAL_LOGS_DIR.glob("*_ch*.json")):
+        chapter_num = extract_chapter_number_from_path(path)
+        if chapter_num is not None:
+            latest_logs[chapter_num] = path
+    return latest_logs
+
+
+def revision_target_chapters(limit: int = MAX_PATCH_REVISIONS_PER_CYCLE) -> list[int]:
+    if limit <= 0:
+        return []
+
+    targets: list[int] = []
+    seen: set[int] = set()
+    weakest = full_eval_weakest_chapter()
+    if weakest is not None and (CHAPTERS_DIR / f"ch_{weakest:02d}.md").exists():
+        targets.append(weakest)
+        seen.add(weakest)
+
+    scored_candidates: list[tuple[float, int]] = []
+    for chapter_num, eval_path in latest_chapter_eval_logs().items():
+        if chapter_num in seen:
+            continue
+        if not (CHAPTERS_DIR / f"ch_{chapter_num:02d}.md").exists():
+            continue
+        payload = load_json_file(eval_path)
+        if payload is None:
+            continue
+        try:
+            score = float(payload.get("overall_score"))
+        except (TypeError, ValueError):
+            continue
+        if score <= PATCH_REVISION_SCORE_CUTOFF:
+            scored_candidates.append((score, chapter_num))
+
+    for _score, chapter_num in sorted(scored_candidates, key=lambda item: (item[0], item[1])):
+        targets.append(chapter_num)
+        seen.add(chapter_num)
+        if len(targets) >= limit:
+            break
+    return targets[:limit]
+
+
+def revision_brief_path(chapter_num: int, suffix: str) -> Path:
+    return BRIEFS_DIR / f"ch{chapter_num:02d}_{suffix}.md"
+
+
+def generate_patch_brief(chapter_num: int, *, use_auto: bool) -> Path | None:
+    if use_auto:
+        command = "gen_brief.py --auto --require-patch-directives"
+        brief_path = revision_brief_path(chapter_num, "auto")
+    else:
+        command = f"gen_brief.py --eval {chapter_num} --require-patch-directives"
+        brief_path = revision_brief_path(chapter_num, "eval")
+
+    result = uv_run(command, timeout=300)
+    if result.returncode != 0:
+        step(f"No patch-friendly brief available for Chapter {chapter_num}; skipping")
+        return None
+    if brief_path.exists():
+        return brief_path
+    if use_auto:
+        fallback = latest_auto_brief()
+        if fallback is not None and extract_chapter_number_from_path(fallback) == chapter_num:
+            return fallback
+    step(f"WARNING: brief generation succeeded but {brief_path.name} was not found")
+    return None
+
+
+def apply_patch_revision(chapter_num: int, brief_path: Path, risk_set: set[int]) -> bool:
+    step(f"Applying patch revision for Chapter {chapter_num}...")
+    chapter_path = CHAPTERS_DIR / f"ch_{chapter_num:02d}.md"
+    pre_text = chapter_path.read_text(encoding="utf-8") if chapter_path.exists() else ""
+    pre_score, _pre_eval = evaluate_chapter(chapter_num, include_risk=chapter_num in risk_set)
+    require_success(
+        uv_run(
+            f"patch_revision.py {chapter_num} {shlex.quote(str(brief_path))} --plan-only",
+            timeout=600,
+        ),
+        f"patch_revision.py {chapter_num}",
+    )
+    require_success(uv_run(f"apply_edits.py {chapter_num}", timeout=120), f"apply_edits.py {chapter_num}")
+    post_score, _post_eval = evaluate_chapter(chapter_num, include_risk=chapter_num in risk_set)
+    step(f"Chapter {chapter_num} revision score: {pre_score} -> {post_score}")
+    if post_score < pre_score and chapter_path.exists():
+        chapter_path.write_text(pre_text, encoding="utf-8")
+        step("Patch revision regressed; restored pre-revision chapter text")
+    return True
+
+
 def build_manuscript() -> Path:
     manuscript_path = BASE_DIR / "manuscript.md"
     parts = []
@@ -346,20 +613,7 @@ def run_foundation(state: dict) -> dict:
 
     best_score = state.get("foundation_score", 0.0)
     iteration = state.get("iteration", 0)
-    generated_paths = [
-        BASE_DIR / "world.md",
-        BASE_DIR / "characters.md",
-        BASE_DIR / "character_engine.json",
-        BASE_DIR / "perspective.md",
-        BASE_DIR / "voice.md",
-        BASE_DIR / "voice_discovery.json",
-        BASE_DIR / "arc_outline.md",
-        BASE_DIR / "chapter_cards.md",
-        BASE_DIR / "thread_registry.json",
-        BASE_DIR / "outline.md",
-        BASE_DIR / "canon.md",
-        MANIFEST_PATH,
-    ]
+    generated_paths = generated_planning_files() + [MANIFEST_PATH]
 
     for i in range(iteration + 1, MAX_FOUNDATION_ITERS + 1):
         banner(f"Foundation Iteration {i}", "-")
@@ -453,11 +707,11 @@ def run_drafting(state: dict) -> dict:
         drafted = False
         is_risk = ch in risk_set
 
+        if ch > 1:
+            ensure_story_state_snapshot(ch - 1)
+
         for attempt in range(1, MAX_CHAPTER_ATTEMPTS + 1):
             step(f"Attempt {attempt}/{MAX_CHAPTER_ATTEMPTS}")
-
-            if ch > 1:
-                require_success(uv_run(f"advance_state.py --chapter {ch - 1}", timeout=300), f"advance_state.py --chapter {ch - 1}")
 
             require_success(uv_run(f"plan_scene.py {ch} --variants 4", timeout=300), f"plan_scene.py {ch}")
             require_success(uv_run(f"draft_chapter.py {ch} --mode auto", timeout=900), f"draft_chapter.py {ch}")
@@ -493,6 +747,7 @@ def run_drafting(state: dict) -> dict:
             build_manifest_and_gate("drafting", chapter=ch)
 
             if chapter_meets_threshold(score, eval_data, is_risk=is_risk):
+                snapshot_story_state(ch)
                 commit_hash = git_add_commit(f"ch{ch:02d}: score {score}, {word_count}w")
                 log_result(commit_hash, f"ch{ch:02d}", score, word_count, "keep", f"Chapter {ch} (attempt {attempt})")
                 state["chapters_drafted"] = ch
@@ -511,6 +766,7 @@ def run_drafting(state: dict) -> dict:
             if ch_file.exists():
                 word_count = len(ch_file.read_text(encoding="utf-8").split())
                 build_manifest_and_gate("drafting", chapter=ch)
+                snapshot_story_state(ch)
                 commit_hash = git_add_commit(f"ch{ch:02d}: best-effort after {MAX_CHAPTER_ATTEMPTS} attempts")
                 log_result(commit_hash, f"ch{ch:02d}", "?", word_count, "forced", f"Chapter {ch}: kept after max attempts")
                 state["chapters_drafted"] = ch
@@ -553,31 +809,17 @@ def run_revision(state: dict, max_cycles: int = MAX_REVISION_CYCLES) -> dict:
         require_success(uv_run(f"humanity_panel.py --evidence {shlex.quote(str(evidence_path))}", timeout=900), "humanity_panel.py --evidence")
 
         evidence_dirty = False
-        brief_result = uv_run("gen_brief.py --auto --require-patch-directives", timeout=300)
-        if brief_result.returncode == 0:
-            brief_path = latest_auto_brief()
-            if brief_path is not None:
-                chapter_num = extract_chapter_number_from_path(brief_path)
-                if chapter_num is not None:
-                    step(f"Applying patch revision for Chapter {chapter_num}...")
-                    chapter_path = CHAPTERS_DIR / f"ch_{chapter_num:02d}.md"
-                    pre_text = chapter_path.read_text(encoding="utf-8") if chapter_path.exists() else ""
-                    pre_score, _pre_eval = evaluate_chapter(chapter_num, include_risk=chapter_num in set(risk_chapters(BASE_DIR)))
-                    require_success(
-                        uv_run(
-                            f"patch_revision.py {chapter_num} {shlex.quote(str(brief_path))} --plan-only",
-                            timeout=600,
-                        ),
-                        f"patch_revision.py {chapter_num}",
-                    )
-                    require_success(uv_run(f"apply_edits.py {chapter_num}", timeout=120), f"apply_edits.py {chapter_num}")
-                    evidence_dirty = True
-                    post_score, _post_eval = evaluate_chapter(chapter_num, include_risk=chapter_num in set(risk_chapters(BASE_DIR)))
-                    step(f"Chapter {chapter_num} revision score: {pre_score} -> {post_score}")
-                    if post_score < pre_score and chapter_path.exists():
-                        chapter_path.write_text(pre_text, encoding="utf-8")
-                        step("Patch revision regressed; restored pre-revision chapter text")
-        else:
+        auto_chapter = full_eval_weakest_chapter()
+        risk_set = set(risk_chapters(BASE_DIR))
+        revised_chapters = 0
+        for chapter_num in revision_target_chapters():
+            brief_path = generate_patch_brief(chapter_num, use_auto=chapter_num == auto_chapter)
+            if brief_path is None:
+                continue
+            evidence_dirty = apply_patch_revision(chapter_num, brief_path, risk_set) or evidence_dirty
+            revised_chapters += 1
+
+        if revised_chapters == 0:
             step("No patch-friendly brief available this cycle; skipping targeted patch application")
 
         if evidence_dirty:
@@ -680,6 +922,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
         if not seed_file.exists():
             print("ERROR: seed.txt not found. Cannot start from scratch without a seed.")
             sys.exit(1)
+        removed = clear_from_scratch_artifacts()
+        step(f"Cleared {len(removed)} generated artifact(s) before restarting from seed.txt")
         state = default_state()
         save_state(state)
     else:

@@ -56,6 +56,38 @@ Return JSON:
 """
 
 
+def parse_json_blob(raw: str) -> dict:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```\w*\n?", "", raw)
+        raw = re.sub(r"\n?```$", "", raw)
+    start = raw.find("{")
+    if start >= 0:
+        depth = 0
+        in_string = False
+        escape = False
+        for index in range(start, len(raw)):
+            char = raw[index]
+            if escape:
+                escape = False
+                continue
+            if char == "\\" and in_string:
+                escape = True
+                continue
+            if char == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return json.loads(raw[start:index + 1], strict=False)
+    return json.loads(raw, strict=False)
+
+
 def call_panel(system: str, prompt: str) -> dict:
     import httpx
 
@@ -74,12 +106,7 @@ def call_panel(system: str, prompt: str) -> dict:
     response = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
     response.raise_for_status()
     raw = response.json()["content"][0]["text"].strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```\w*\n?", "", raw)
-        raw = re.sub(r"\n?```$", "", raw)
-    start = raw.find("{")
-    end = raw.rfind("}")
-    return json.loads(raw[start:end + 1], strict=False)
+    return parse_json_blob(raw)
 
 
 def main() -> None:

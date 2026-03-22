@@ -7,8 +7,11 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+import gen_arc
+import gen_chapter_cards
 import gen_outline
 import gen_outline_part2
+import gen_thread_registry
 
 from planning_split import (
     CHAPTER_CARD_FIELDS,
@@ -214,6 +217,64 @@ goal: Get proof
         self.assertIn("### Ch 1: Signals", rendered)
         self.assertIn("### Ch 2: Echoes", rendered)
         self.assertIn("## Foreshadowing Ledger", rendered)
+
+    def test_generate_arc_warns_when_falling_back(self):
+        fallback_arc = {"title": "Signals", "acts": [], "major_reveals": [], "pressure_escalations": [], "candidate_risk_chapters": [4]}
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "arc_outline.md"
+            with (
+                mock.patch.object(gen_arc, "API_KEY", "test-key"),
+                mock.patch.object(gen_arc, "read_required", return_value="stub"),
+                mock.patch.object(gen_arc, "call_writer", side_effect=RuntimeError("writer failed")),
+                mock.patch.object(gen_arc, "derive_arc", return_value=fallback_arc),
+                redirect_stderr(stderr),
+            ):
+                arc = gen_arc.generate_arc(output_path=output_path)
+
+        self.assertEqual(arc, fallback_arc)
+        self.assertIn("WARNING: gen_arc.py falling back to derived arc outline: writer failed", stderr.getvalue())
+
+    def test_generate_chapter_cards_warns_when_falling_back(self):
+        fallback_cards = normalize_chapter_cards([{"number": 1, "title": "Signals"}])
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "chapter_cards.md"
+            with (
+                mock.patch.object(gen_chapter_cards, "API_KEY", "test-key"),
+                mock.patch.object(gen_chapter_cards, "read_required", return_value="stub"),
+                mock.patch.object(gen_chapter_cards, "call_writer", side_effect=RuntimeError("writer failed")),
+                mock.patch.object(gen_chapter_cards, "derive_cards", return_value=fallback_cards),
+                redirect_stderr(stderr),
+            ):
+                cards = gen_chapter_cards.generate_chapter_cards(output_path=output_path)
+
+        self.assertEqual(cards, fallback_cards)
+        self.assertIn(
+            "WARNING: gen_chapter_cards.py falling back to derived chapter cards: writer failed",
+            stderr.getvalue(),
+        )
+
+    def test_generate_thread_registry_warns_when_falling_back(self):
+        fallback_threads = normalize_thread_registry(
+            [{"id": "proof", "description": "Need proof", "type": "plot", "first_seen": 1, "payoff": 5}]
+        )
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "thread_registry.json"
+            with (
+                mock.patch.object(gen_thread_registry, "API_KEY", "test-key"),
+                mock.patch.object(gen_thread_registry, "call_writer", side_effect=RuntimeError("writer failed")),
+                mock.patch.object(gen_thread_registry, "derive_threads", return_value=fallback_threads),
+                redirect_stderr(stderr),
+            ):
+                threads = gen_thread_registry.generate_thread_registry(output_path=output_path)
+
+        self.assertEqual(threads, fallback_threads)
+        self.assertIn(
+            "WARNING: gen_thread_registry.py falling back to derived thread registry: writer failed",
+            stderr.getvalue(),
+        )
 
     def test_derive_chapter_cards_from_legacy_outline_keeps_heading_title(self):
         legacy = """# Outline

@@ -1,10 +1,13 @@
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+import io
 
 from dialogue_audit import build_dialogue_audit
 from evidence_tools import build_evidence_pack
+import evaluate
 from evaluate import normalize_chapter_result, normalize_full_result
 from narration_audit import build_narration_audit
 from reader_panel import build_legacy_prompt
@@ -97,6 +100,59 @@ class EvidenceEvalTests(unittest.TestCase):
         self.assertIn("theme_coherence", result)
         self.assertIn("foreshadowing_resolution", result)
         self.assertIn("voice_consistency", result)
+
+    def test_evaluate_full_summary_mode_warns_and_normalizes(self):
+        stderr = io.StringIO()
+        with (
+            patch.object(evaluate, "load_layer_files", return_value={"voice": "", "world": "", "characters": "", "outline": ""}),
+            patch.object(evaluate, "load_all_chapters", return_value={1: "Opening text", 2: "Closing text"}),
+            patch.object(
+                evaluate,
+                "call_judge",
+                return_value='{"theme_pressure":{"score":8,"note":"sharp"},"arc_completion":{"score":7,"note":"complete"},"perspective_continuity":{"score":6,"note":"steady"},"novel_score":7.2}',
+            ),
+            redirect_stderr(stderr),
+        ):
+            result = evaluate.evaluate_full()
+
+        self.assertIn("theme_coherence", result)
+        self.assertIn("foreshadowing_resolution", result)
+        self.assertIn("voice_consistency", result)
+        self.assertEqual(result["evaluation_mode"], "summary_fallback")
+        self.assertIn("degraded summary-mode judging", result["warning"])
+        self.assertIn("degraded summary-mode judging", stderr.getvalue())
+
+    def test_evaluate_full_evidence_mode_uses_expanded_token_budget(self):
+        with TemporaryDirectory() as tmpdir:
+            evidence_path = Path(tmpdir) / "evidence.json"
+            evidence_path.write_text("{}\n", encoding="utf-8")
+
+            with (
+                patch.object(
+                    evaluate,
+                    "load_extended_layer_files",
+                    return_value={
+                        "voice": "",
+                        "perspective": "",
+                        "world": "",
+                        "characters": "",
+                        "canon": "",
+                        "thread_registry": "",
+                    },
+                ),
+                patch.object(evaluate, "load_json", return_value={}),
+                patch.object(evaluate, "render_evidence_pack", return_value="PACK"),
+                patch.object(
+                    evaluate,
+                    "call_judge",
+                    return_value='{"theme_pressure":{"score":8,"note":"sharp"},"arc_completion":{"score":7,"note":"complete"},"perspective_continuity":{"score":6,"note":"steady"},"novel_score":7.8}',
+                ) as mock_call,
+            ):
+                result = evaluate.evaluate_full(str(evidence_path))
+
+        self.assertEqual(result["evaluation_mode"], "evidence")
+        self.assertIn("theme_coherence", result)
+        self.assertEqual(mock_call.call_args.kwargs["max_tokens"], evaluate.FULL_EVIDENCE_MAX_TOKENS)
 
     def test_reader_panel_legacy_prompt_falls_back_to_chapters_without_arc_summary(self):
         with TemporaryDirectory() as tmpdir:

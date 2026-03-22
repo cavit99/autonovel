@@ -245,6 +245,120 @@ class OrchestratorManifestTests(unittest.TestCase):
         self.assertEqual(updated["chapters_drafted"], 1)
         self.assertEqual(commands[:3], ["plan_scene.py 1 --variants 4", "draft_chapter.py 1 --mode auto", "evaluate.py --chapter 1"])
 
+    def test_git_add_commit_uses_scoped_pathspecs_and_argument_safe_commit_message(self):
+        commands = []
+        message = 'revision cycle "safe" $(touch should_not_run)'
+
+        def fake_run_tool_args(args, timeout=600, check=False):
+            commands.append(args)
+            if args[:3] == ["git", "rev-parse", "--short"]:
+                return subprocess.CompletedProcess(args, 0, stdout="abc123\n", stderr="")
+            return subprocess.CompletedProcess(args, 0, stdout="ok\n", stderr="")
+
+        with (
+            patch.object(run_pipeline, "pipeline_stage_pathspecs", return_value=["manifest.json", ":(glob)chapters/ch_*.md"]),
+            patch.object(run_pipeline, "run_tool_args", side_effect=fake_run_tool_args),
+        ):
+            commit_hash = run_pipeline.git_add_commit(message)
+
+        self.assertEqual(commit_hash, "abc123")
+        self.assertEqual(commands[0], ["git", "add", "-A", "--", "manifest.json", ":(glob)chapters/ch_*.md"])
+        self.assertEqual(commands[1], ["git", "commit", "-m", message, "--allow-empty"])
+
+    def test_revision_target_chapters_keeps_full_eval_weakest_then_low_scores(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            chapters_dir = root / "chapters"
+            eval_logs_dir = root / "eval_logs"
+            chapters_dir.mkdir()
+            eval_logs_dir.mkdir()
+            for chapter_num in range(1, 5):
+                (chapters_dir / f"ch_{chapter_num:02d}.md").write_text(f"# Chapter {chapter_num}\n\nText\n", encoding="utf-8")
+            (eval_logs_dir / "20260322_000000_full.json").write_text(
+                json.dumps({"weakest_chapter": 3}) + "\n",
+                encoding="utf-8",
+            )
+            (eval_logs_dir / "20260322_000000_ch01.json").write_text(json.dumps({"overall_score": 7.2}) + "\n", encoding="utf-8")
+            (eval_logs_dir / "20260322_000000_ch02.json").write_text(json.dumps({"overall_score": 5.2}) + "\n", encoding="utf-8")
+            (eval_logs_dir / "20260322_000000_ch03.json").write_text(json.dumps({"overall_score": 5.7}) + "\n", encoding="utf-8")
+            (eval_logs_dir / "20260322_000000_ch04.json").write_text(json.dumps({"overall_score": 5.2}) + "\n", encoding="utf-8")
+
+            with (
+                patch.object(run_pipeline, "CHAPTERS_DIR", chapters_dir),
+                patch.object(run_pipeline, "EVAL_LOGS_DIR", eval_logs_dir),
+            ):
+                targets = run_pipeline.revision_target_chapters()
+
+        self.assertEqual(targets, [3, 2, 4])
+
+    def test_drafting_snapshots_previous_once_and_kept_final_chapter(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            chapters_dir = root / "chapters"
+            scene_options_dir = root / "scene_options"
+            story_state_dir = root / "state" / "story_state"
+            eval_logs_dir = root / "eval_logs"
+            chapters_dir.mkdir(parents=True)
+            scene_options_dir.mkdir(parents=True)
+            story_state_dir.mkdir(parents=True)
+            eval_logs_dir.mkdir(parents=True)
+
+            commands = []
+            eval_scores = iter([5.4, 5.5, 6.4])
+
+            def fake_uv_run(script, timeout=600, check=False):
+                commands.append(script)
+                if script == "advance_state.py --chapter 1":
+                    (story_state_dir / "ch_01.json").write_text('{"chapter": 1}\n', encoding="utf-8")
+                elif script == "advance_state.py --chapter 2":
+                    (story_state_dir / "ch_02.json").write_text('{"chapter": 2}\n', encoding="utf-8")
+                elif script == "plan_scene.py 2 --variants 4":
+                    (scene_options_dir / "ch_02.json").write_text("[]\n", encoding="utf-8")
+                elif script == "draft_chapter.py 2 --mode auto":
+                    (chapters_dir / "ch_02.md").write_text(
+                        "# Chapter 2\n\n" + ("Cass kept the bell hidden in his sleeve.\n" * 8),
+                        encoding="utf-8",
+                    )
+                elif script == "evaluate.py --chapter 2":
+                    score = next(eval_scores)
+                    call_index = len([command for command in commands if command == script])
+                    log_path = eval_logs_dir / f"20260322_000000_ch02_{call_index}.json"
+                    log_path.write_text(json.dumps({"overall_score": score}) + "\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(
+                        script,
+                        0,
+                        stdout=f"---\noverall_score: {score}\n\neval_log: {log_path}\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+
+            state = run_pipeline.default_state()
+            state["phase"] = "drafting"
+            state["chapters_total"] = 2
+            state["chapters_drafted"] = 1
+            with (
+                patch.object(run_pipeline, "BASE_DIR", root),
+                patch.object(run_pipeline, "CHAPTERS_DIR", chapters_dir),
+                patch.object(run_pipeline, "SCENE_OPTIONS_DIR", scene_options_dir),
+                patch.object(run_pipeline, "STORY_STATE_DIR", story_state_dir),
+                patch.object(run_pipeline, "EVAL_LOGS_DIR", eval_logs_dir),
+                patch.object(run_pipeline, "uv_run", side_effect=fake_uv_run),
+                patch.object(run_pipeline, "build_manifest_and_gate", return_value={}),
+                patch.object(run_pipeline, "git_add_commit", return_value="def456"),
+                patch.object(run_pipeline, "save_state"),
+                patch.object(run_pipeline, "log_result"),
+                patch.object(run_pipeline, "restore_paths"),
+                patch.object(run_pipeline, "is_critical_chapter", return_value=False),
+                patch.object(run_pipeline, "risk_chapters", return_value=[]),
+            ):
+                updated = run_pipeline.run_drafting(state)
+                snapshot_exists = (story_state_dir / "ch_02.json").exists()
+
+        self.assertEqual(updated["phase"], "revision")
+        self.assertEqual(commands.count("advance_state.py --chapter 1"), 1)
+        self.assertEqual(commands.count("advance_state.py --chapter 2"), 1)
+        self.assertTrue(snapshot_exists)
+
     def test_revision_rebuilds_evidence_pack_after_patch_before_full_eval(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -311,7 +425,8 @@ class OrchestratorManifestTests(unittest.TestCase):
                 patch.object(run_pipeline, "uv_run", side_effect=fake_uv_run),
                 patch.object(run_pipeline, "evaluate_chapter", side_effect=fake_evaluate_chapter),
                 patch.object(run_pipeline, "evaluate_full", side_effect=fake_evaluate_full),
-                patch.object(run_pipeline, "latest_auto_brief", return_value=brief_path),
+                patch.object(run_pipeline, "full_eval_weakest_chapter", return_value=1),
+                patch.object(run_pipeline, "revision_target_chapters", return_value=[1]),
                 patch.object(run_pipeline, "build_manifest_and_gate", return_value={}),
                 patch.object(run_pipeline, "git_add_commit", return_value="ghi789"),
                 patch.object(run_pipeline, "save_state"),
@@ -327,6 +442,102 @@ class OrchestratorManifestTests(unittest.TestCase):
             commands.index("assemble_evidence_pack.py --novel", commands.index("apply_edits.py 1")),
             commands.index("apply_edits.py 1"),
         )
+
+    def test_revision_can_apply_multiple_patch_briefs_in_one_cycle(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            chapters_dir = root / "chapters"
+            briefs_dir = root / "briefs"
+            edit_logs_dir = root / "edit_logs"
+            eval_logs_dir = root / "eval_logs"
+            chapters_dir.mkdir(parents=True)
+            briefs_dir.mkdir(parents=True)
+            edit_logs_dir.mkdir(parents=True)
+            eval_logs_dir.mkdir(parents=True)
+
+            chapter_one = chapters_dir / "ch_01.md"
+            chapter_two = chapters_dir / "ch_02.md"
+            chapter_one.write_text("# Chapter 1\n\nBEFORE PATCH ONE\n", encoding="utf-8")
+            chapter_two.write_text("# Chapter 2\n\nBEFORE PATCH TWO\n", encoding="utf-8")
+            evidence_path = eval_logs_dir / "evidence_pack.json"
+            (eval_logs_dir / "20260322_000000_full.json").write_text(
+                json.dumps({"weakest_chapter": 1}) + "\n",
+                encoding="utf-8",
+            )
+            (eval_logs_dir / "20260322_000000_ch01.json").write_text(json.dumps({"overall_score": 5.4}) + "\n", encoding="utf-8")
+            (eval_logs_dir / "20260322_000000_ch02.json").write_text(json.dumps({"overall_score": 5.8}) + "\n", encoding="utf-8")
+            commands = []
+            eval_calls = {1: 0, 2: 0}
+
+            def fake_uv_run(script, timeout=600, check=False):
+                commands.append(script)
+                if script == "assemble_evidence_pack.py --novel":
+                    snapshot = "\n".join(
+                        [
+                            chapter_one.read_text(encoding="utf-8"),
+                            chapter_two.read_text(encoding="utf-8"),
+                        ]
+                    )
+                    evidence_path.write_text(
+                        json.dumps({"snapshot": snapshot}) + "\n",
+                        encoding="utf-8",
+                    )
+                elif script == "gen_brief.py --auto --require-patch-directives":
+                    (briefs_dir / "ch01_auto.md").write_text(
+                        "# Brief\n\n## Patch Directives\n- replace: \"BEFORE PATCH ONE\" => \"AFTER PATCH ONE\"\n",
+                        encoding="utf-8",
+                    )
+                elif script == "gen_brief.py --eval 2 --require-patch-directives":
+                    (briefs_dir / "ch02_eval.md").write_text(
+                        "# Brief\n\n## Patch Directives\n- replace: \"BEFORE PATCH TWO\" => \"AFTER PATCH TWO\"\n",
+                        encoding="utf-8",
+                    )
+                elif script == "apply_edits.py 1":
+                    chapter_one.write_text("# Chapter 1\n\nAFTER PATCH ONE\n", encoding="utf-8")
+                elif script == "apply_edits.py 2":
+                    chapter_two.write_text("# Chapter 2\n\nAFTER PATCH TWO\n", encoding="utf-8")
+                return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+
+            def fake_evaluate_chapter(chapter_num, include_risk=False):
+                eval_calls[chapter_num] += 1
+                chapter_scores = {
+                    1: (6.0, 6.4),
+                    2: (5.8, 6.2),
+                }
+                pre_score, post_score = chapter_scores[chapter_num]
+                return (pre_score, {}) if eval_calls[chapter_num] == 1 else (post_score, {})
+
+            def fake_evaluate_full(path):
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                self.assertIn("AFTER PATCH ONE", payload["snapshot"])
+                self.assertIn("AFTER PATCH TWO", payload["snapshot"])
+                return 7.8, {}
+
+            state = run_pipeline.default_state()
+            state["phase"] = "revision"
+            with (
+                patch.object(run_pipeline, "BASE_DIR", root),
+                patch.object(run_pipeline, "CHAPTERS_DIR", chapters_dir),
+                patch.object(run_pipeline, "BRIEFS_DIR", briefs_dir),
+                patch.object(run_pipeline, "EDIT_LOGS_DIR", edit_logs_dir),
+                patch.object(run_pipeline, "EVAL_LOGS_DIR", eval_logs_dir),
+                patch.object(run_pipeline, "uv_run", side_effect=fake_uv_run),
+                patch.object(run_pipeline, "evaluate_chapter", side_effect=fake_evaluate_chapter),
+                patch.object(run_pipeline, "evaluate_full", side_effect=fake_evaluate_full),
+                patch.object(run_pipeline, "build_manifest_and_gate", return_value={}),
+                patch.object(run_pipeline, "git_add_commit", return_value="ghi789"),
+                patch.object(run_pipeline, "save_state"),
+                patch.object(run_pipeline, "log_result"),
+                patch.object(run_pipeline, "risk_chapters", return_value=[]),
+            ):
+                updated = run_pipeline.run_revision(state, max_cycles=1)
+
+        self.assertEqual(updated["phase"], "review")
+        self.assertIn("gen_brief.py --auto --require-patch-directives", commands)
+        self.assertIn("gen_brief.py --eval 2 --require-patch-directives", commands)
+        self.assertIn("apply_edits.py 1", commands)
+        self.assertIn("apply_edits.py 2", commands)
+        self.assertEqual(commands.count("assemble_evidence_pack.py --novel"), 2)
 
 
 if __name__ == "__main__":
