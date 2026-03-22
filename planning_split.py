@@ -123,7 +123,10 @@ def extract_json_object(text: str):
     if text.startswith("```"):
         text = re.sub(r"^```\w*\n?", "", text)
         text = re.sub(r"\n?```$", "", text)
-    start = min(idx for idx in (text.find("{"), text.find("[")) if idx >= 0)
+    start_candidates = [idx for idx in (text.find("{"), text.find("[")) if idx >= 0]
+    if not start_candidates:
+        raise ValueError("No JSON object found in response")
+    start = min(start_candidates)
     try:
         return json.loads(text[start:], strict=False)
     except json.JSONDecodeError:

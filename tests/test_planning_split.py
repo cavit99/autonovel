@@ -17,6 +17,7 @@ from planning_split import (
     CHAPTER_CARD_FIELDS,
     derive_thread_registry_from_outline,
     derive_chapter_cards_from_outline,
+    extract_json_object,
     normalize_chapter_cards,
     normalize_thread_registry,
     parse_arc_outline,
@@ -90,6 +91,10 @@ risk: pov
         self.assertEqual(card["title"], "Signals")
         for field in CHAPTER_CARD_FIELDS:
             self.assertIn(field, card)
+
+    def test_extract_json_object_rejects_missing_json_cleanly(self):
+        with self.assertRaisesRegex(ValueError, "No JSON object found in response"):
+            extract_json_object("No structured payload was returned.")
 
     def test_render_chapter_cards_produces_template_when_empty(self):
         rendered = render_chapter_cards([])

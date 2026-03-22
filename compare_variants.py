@@ -99,6 +99,14 @@ def apply_winner(chapter_num: int, winner_path: Path, base_dir: Path) -> Path:
     return target
 
 
+def resolve_winner_candidate(candidates: list[dict[str, Any]], result: dict[str, Any]) -> dict[str, Any]:
+    winner_id = str(result.get("winner", "")).strip()
+    winner = next((candidate for candidate in candidates if candidate["id"] == winner_id), None)
+    if winner is None:
+        raise ValueError(f"Unknown winner id: {winner_id or '<empty>'}")
+    return winner
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare chapter variants and apply the primary winner.")
     parser.add_argument("chapter", type=int, help="Chapter number whose variants should be compared")
@@ -125,15 +133,15 @@ def main() -> None:
 
     if API_KEY:
         result = call_judge(build_compare_prompt(args.chapter, candidates))
-        winner_id = str(result.get("winner", "")).strip()
-        winner = next((candidate for candidate in candidates if candidate["id"] == winner_id), None)
-        if winner is None:
+        try:
+            winner = resolve_winner_candidate(candidates, result)
+        except ValueError:
             result = pick_best_variant_deterministically(candidates)
-            winner = next(candidate for candidate in candidates if str(candidate["path"]) == result["winner_path"])
+            winner = resolve_winner_candidate(candidates, result)
             result["notes"] = ["Model compare returned an unknown winner id; used deterministic fallback."]
     else:
         result = pick_best_variant_deterministically(candidates)
-        winner = next(candidate for candidate in candidates if str(candidate["path"]) == result["winner_path"])
+        winner = resolve_winner_candidate(candidates, result)
 
     applied_path = apply_winner(args.chapter, Path(winner["path"]), args.base_dir)
     payload = {
