@@ -405,6 +405,58 @@ The narration revises itself when it gets too sure.
             self.assertIn("LOCAL THREAD WINDOW", prompt)
             self.assertEqual(load_chapter_card(base, 1)["title"], "Signals")
 
+    def test_detect_new_planning_mode_rejects_missing_chapter_card_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            planning = base / "planning"
+            planning.mkdir()
+            (planning / "perspective.md").write_text("# Perspective\n", encoding="utf-8")
+            (planning / "voice.md").write_text("# Voice\n", encoding="utf-8")
+            (planning / "character_engine.json").write_text("{}\n", encoding="utf-8")
+            (planning / "chapter_cards.md").write_text(
+                "# Chapter Cards\n\n## Ch 01: Signals\ngoal: Get proof\n",
+                encoding="utf-8",
+            )
+            (planning / "thread_registry.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "letters",
+                            "description": "Guild letters are circulating",
+                            "type": "pressure",
+                            "first_seen": 1,
+                            "payoff": 0,
+                            "required": True,
+                        }
+                    ],
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            (planning / "world.md").write_text("# World\n", encoding="utf-8")
+            (planning / "canon.md").write_text("# Canon\n", encoding="utf-8")
+            scene_dir = base / "scene_options"
+            scene_dir.mkdir(parents=True)
+            (scene_dir / "ch_02.json").write_text("[]\n", encoding="utf-8")
+            story_dir = base / "state" / "story_state"
+            story_dir.mkdir(parents=True)
+            (story_dir / "ch_01.json").write_text("{}\n", encoding="utf-8")
+
+            self.assertFalse(detect_new_planning_mode(base, 2))
+
+    def test_resolve_mode_auto_raises_instead_of_silent_legacy_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            planning = base / "planning"
+            planning.mkdir()
+            (planning / "outline.md").write_text(
+                "# Outline\n\n## Act 1\n\n### Ch 1: Legacy\n- Beat\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "legacy fallback is disabled"):
+                resolve_mode(base, 1, "auto")
+
     def test_local_thread_window_prefers_required_pressure_threads(self):
         window = local_thread_window(
             [

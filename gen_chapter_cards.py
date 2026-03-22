@@ -124,21 +124,32 @@ def derive_cards() -> list[dict[str, object]]:
     return derive_chapter_cards_from_outline(legacy_outline)
 
 
-def generate_chapter_cards(*, output_path: Path = DEFAULT_OUTPUT) -> list[dict[str, object]]:
-    try:
-        if not API_KEY:
-            raise RuntimeError("missing API key")
-        seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
-        world = read_required(readable_planning_artifact_path("world", BASE_DIR))
-        characters = read_required(readable_planning_artifact_path("characters", BASE_DIR))
-        perspective = read_required(readable_planning_artifact_path("perspective", BASE_DIR))
-        voice = read_required(readable_planning_artifact_path("voice", BASE_DIR))
-        arc = read_required(readable_planning_artifact_path("arc_outline", BASE_DIR))
-        raw = call_writer(build_prompt(seed, world, characters, perspective, voice, arc))
-        cards = normalize_chapter_cards(extract_json_object(raw))
-    except Exception as exc:
-        print(f"WARNING: gen_chapter_cards.py falling back to derived chapter cards: {exc}", file=sys.stderr)
-        cards = derive_cards()
+def import_cards_from_outline(*, output_path: Path = DEFAULT_OUTPUT) -> list[dict[str, object]]:
+    legacy_outline = read_text_if_exists(readable_planning_artifact_path("outline", BASE_DIR))
+    if not legacy_outline.strip():
+        raise RuntimeError("planning/outline.md is missing or empty; cannot import chapter cards")
+    cards = derive_cards()
+    ensure_parent_dir(output_path)
+    output_path.write_text(render_chapter_cards(cards) + "\n")
+    return cards
+
+
+def generate_chapter_cards(
+    *, output_path: Path = DEFAULT_OUTPUT, import_from_outline: bool = False
+) -> list[dict[str, object]]:
+    if import_from_outline:
+        return import_cards_from_outline(output_path=output_path)
+
+    if not API_KEY:
+        raise RuntimeError("missing API key")
+    seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
+    world = read_required(readable_planning_artifact_path("world", BASE_DIR))
+    characters = read_required(readable_planning_artifact_path("characters", BASE_DIR))
+    perspective = read_required(readable_planning_artifact_path("perspective", BASE_DIR))
+    voice = read_required(readable_planning_artifact_path("voice", BASE_DIR))
+    arc = read_required(readable_planning_artifact_path("arc_outline", BASE_DIR))
+    raw = call_writer(build_prompt(seed, world, characters, perspective, voice, arc))
+    cards = normalize_chapter_cards(extract_json_object(raw))
 
     ensure_parent_dir(output_path)
     output_path.write_text(render_chapter_cards(cards) + "\n")
@@ -148,15 +159,20 @@ def generate_chapter_cards(*, output_path: Path = DEFAULT_OUTPUT) -> list[dict[s
 def load_chapter_cards(path: Path) -> list[dict[str, object]]:
     if path.exists():
         return parse_chapter_cards(path.read_text())
-    return derive_cards()
+    return []
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate the PR2 chapter cards artifact")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Where to write chapter_cards.md")
+    parser.add_argument(
+        "--import-from-outline",
+        action="store_true",
+        help="Explicitly derive chapter_cards.md from the legacy planning/outline.md compatibility artifact",
+    )
     args = parser.parse_args()
 
-    cards = generate_chapter_cards(output_path=args.output)
+    cards = generate_chapter_cards(output_path=args.output, import_from_outline=args.import_from_outline)
     print(f"Saved chapter cards to {args.output}", file=sys.stderr)
     print(render_chapter_cards(cards))
 

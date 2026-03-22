@@ -309,32 +309,29 @@ def chapter_card_for(cards: list[dict[str, object]], chapter_num: int) -> dict[s
     for card in cards:
         if int(card.get("number", 0)) == chapter_num:
             return card
-    return {
-        "number": chapter_num,
-        "title": f"Chapter {chapter_num}",
-        "focus_character": "",
-        "goal": "",
-        "pressure": "",
-        "reversal": "",
-        "aftermath": "",
-        "irreversible_change": "",
-        "allowed_ambiguity": "",
-        "time_span": "",
-        "scene_density": "medium",
-        "scene_type": "investigation",
-        "scene_method": "close_interiority",
-        "risk": "none",
-    }
+    return {}
 
 
 def load_chapter_card(base_dir: Path, chapter_num: int) -> dict[str, object]:
-    cards = parse_chapter_cards(read_text_if_exists(readable_planning_artifact_path("chapter_cards", base_dir)))
-    return chapter_card_for(cards, chapter_num)
+    cards_path = readable_planning_artifact_path("chapter_cards", base_dir)
+    cards = parse_chapter_cards(read_text_if_exists(cards_path))
+    card = chapter_card_for(cards, chapter_num)
+    if not card:
+        raise FileNotFoundError(f"{cards_path} does not contain a chapter card for chapter {chapter_num}")
+    return card
 
 
 def load_thread_registry(base_dir: Path) -> list[dict[str, object]]:
-    payload = read_json_if_exists(readable_planning_artifact_path("thread_registry", base_dir), [])
-    return normalize_thread_registry(payload)
+    path = readable_planning_artifact_path("thread_registry", base_dir)
+    if not path.exists():
+        raise FileNotFoundError(f"missing required planning artifact: {path}")
+    try:
+        threads = normalize_thread_registry(json.loads(path.read_text(encoding="utf-8")))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path} contains invalid JSON") from exc
+    if not threads:
+        raise ValueError(f"{path} is empty")
+    return threads
 
 
 def local_thread_window(threads: list[dict[str, object]], chapter_num: int, limit: int = 6) -> list[dict[str, object]]:
@@ -1161,7 +1158,7 @@ def scene_options_path(base_dir: Path, chapter_num: int) -> Path:
     return base_dir / "scene_options" / f"ch_{chapter_num:02d}.json"
 
 
-def detect_new_planning_mode(base_dir: Path, chapter_num: int) -> bool:
+def required_new_planning_paths(base_dir: Path, chapter_num: int) -> list[Path]:
     required = [
         readable_planning_artifact_path("perspective", base_dir),
         readable_planning_artifact_path("voice", base_dir),
@@ -1174,10 +1171,22 @@ def detect_new_planning_mode(base_dir: Path, chapter_num: int) -> bool:
     ]
     if chapter_num > 1:
         required.append(story_state_path(base_dir, chapter_num - 1))
-    if not all(path.exists() for path in required):
+    return required
+
+
+def missing_new_planning_paths(base_dir: Path, chapter_num: int) -> list[Path]:
+    return [path for path in required_new_planning_paths(base_dir, chapter_num) if not path.exists()]
+
+
+def detect_new_planning_mode(base_dir: Path, chapter_num: int) -> bool:
+    if missing_new_planning_paths(base_dir, chapter_num):
         return False
-    chapter_card = load_chapter_card(base_dir, chapter_num)
-    return bool(chapter_card.get("number"))
+    try:
+        load_chapter_card(base_dir, chapter_num)
+        load_thread_registry(base_dir)
+    except (FileNotFoundError, ValueError):
+        return False
+    return True
 
 
 def extract_chapter_outline(outline_text: str, chapter_num: int) -> str:
@@ -1382,4 +1391,26 @@ def build_system_prompt(mode: str) -> str:
 def resolve_mode(base_dir: Path, chapter_num: int, requested_mode: str) -> str:
     if requested_mode in {"legacy", "new"}:
         return requested_mode
-    return "new" if detect_new_planning_mode(base_dir, chapter_num) else "legacy"
+    if detect_new_planning_mode(base_dir, chapter_num):
+        return "new"
+
+    missing = missing_new_planning_paths(base_dir, chapter_num)
+    if missing:
+        missing_display = ", ".join(str(path.relative_to(base_dir)) for path in missing)
+        raise RuntimeError(
+            "planner-mode auto requires canonical planning artifacts; legacy fallback is disabled. "
+            f"Missing: {missing_display}"
+        )
+
+    try:
+        load_chapter_card(base_dir, chapter_num)
+        load_thread_registry(base_dir)
+    except (FileNotFoundError, ValueError) as exc:
+        raise RuntimeError(
+            "planner-mode auto requires canonical planning artifacts; legacy fallback is disabled. "
+            f"{exc}"
+        ) from exc
+
+    raise RuntimeError(
+        "planner-mode auto requires canonical planning artifacts; legacy fallback is disabled."
+    )

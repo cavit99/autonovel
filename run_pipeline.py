@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 from manifest_tools import MANIFEST_PATH, load_manifest, planned_chapter_count, risk_chapters
-from planning_split import normalize_thread_registry, parse_chapter_cards
+from planning_split import normalize_thread_registry, parse_chapter_cards, parse_thread_registry
 from project_paths import (
     ensure_parent_dir,
     ensure_planning_dir,
@@ -170,6 +170,7 @@ def step(text: str) -> None:
 STDERR_PREVIEW_CHARS = 1600
 SUBPROCESS_HEARTBEAT_SECONDS = 30.0
 OUTLINE_CHAPTER_HEADING_RE = re.compile(r"^###\s*Ch(?:apter)?\s*(\d+)", re.MULTILINE)
+OUTLINE_CHAPTER_TITLE_RE = re.compile(r"^###\s*Ch(?:apter)?\s*(\d+)\s*:\s*(.+)$", re.MULTILINE)
 
 
 def preview_stderr(text: str, limit: int = STDERR_PREVIEW_CHARS) -> str:
@@ -522,6 +523,66 @@ def summarize_outline_artifact() -> None:
     step(f"Legacy outline ready: {chapter_count} chapters")
 
 
+def validate_chapter_cards_artifact() -> list[dict[str, object]]:
+    path = planning_artifact_path("chapter_cards", BASE_DIR)
+    try:
+        cards = parse_chapter_cards(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise RuntimeError(f"gen_chapter_cards.py did not produce a readable {path}") from exc
+    if not cards:
+        raise RuntimeError(f"gen_chapter_cards.py produced {path} but it parsed to 0 chapter cards")
+    return cards
+
+
+def validate_thread_registry_artifact() -> list[dict[str, object]]:
+    path = planning_artifact_path("thread_registry", BASE_DIR)
+    try:
+        threads = parse_thread_registry(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise RuntimeError(f"gen_thread_registry.py did not produce a readable {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"gen_thread_registry.py produced invalid JSON in {path}") from exc
+
+    if not threads:
+        raise RuntimeError(f"gen_thread_registry.py produced an empty {path}")
+    if not any(
+        str(thread.get("description", "")).strip()
+        or int(thread.get("first_seen") or thread.get("planted") or 0) > 0
+        or int(thread.get("payoff") or 0) > 0
+        for thread in threads
+    ):
+        raise RuntimeError(f"gen_thread_registry.py produced a non-meaningful {path}")
+    return threads
+
+
+def validate_outline_matches_chapter_cards(cards: list[dict[str, object]]) -> None:
+    path = planning_artifact_path("outline", BASE_DIR)
+    try:
+        outline_text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError(f"gen_outline_part2.py did not produce a readable {path}") from exc
+
+    outline_count = len(OUTLINE_CHAPTER_HEADING_RE.findall(outline_text))
+    if outline_count != len(cards):
+        raise RuntimeError(
+            f"gen_outline_part2.py produced {path} with {outline_count} chapters, "
+            f"but planning/chapter_cards.md has {len(cards)}"
+        )
+
+    outline_titles = {
+        int(match.group(1)): match.group(2).strip()
+        for match in OUTLINE_CHAPTER_TITLE_RE.finditer(outline_text)
+    }
+    for card in cards:
+        number = int(card.get("number", 0) or 0)
+        outline_title = outline_titles.get(number, "")
+        if outline_title and outline_title != str(card.get("title", "")).strip():
+            raise RuntimeError(
+                f"gen_outline_part2.py produced {path} with title mismatch for chapter {number}: "
+                f"{outline_title!r} != {str(card.get('title', '')).strip()!r}"
+            )
+
+
 def count_words_in_chapters() -> int:
     return sum(len(path.read_text(encoding="utf-8").split()) for path in CHAPTERS_DIR.glob("ch_*.md"))
 
@@ -796,14 +857,17 @@ def run_foundation(state: dict) -> dict:
 
         step("Generating chapter cards...")
         require_success(uv_run("gen_chapter_cards.py", timeout=300), "gen_chapter_cards.py")
+        cards = validate_chapter_cards_artifact()
         summarize_chapter_cards_artifact()
 
         step("Generating thread registry...")
         require_success(uv_run("gen_thread_registry.py", timeout=300), "gen_thread_registry.py")
+        validate_thread_registry_artifact()
         summarize_thread_registry_artifact()
 
         step("Refreshing legacy outline compatibility artifact...")
         require_success(uv_run("gen_outline_part2.py", timeout=300), "gen_outline_part2.py")
+        validate_outline_matches_chapter_cards(cards)
         summarize_outline_artifact()
 
         step("Generating canon...")

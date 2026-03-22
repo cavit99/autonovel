@@ -139,8 +139,7 @@ def planned_chapter_count(base_dir: Path = BASE_DIR) -> int:
     chapter_cards_path = readable_planning_artifact_path("chapter_cards", base_dir)
     if chapter_cards_path.exists():
         cards = parse_chapter_cards(chapter_cards_path.read_text(encoding="utf-8"))
-        if cards:
-            return len(cards)
+        return len(cards)
 
     state_path = base_dir / "state.json"
     state = safe_load_json(state_path, {})

@@ -489,6 +489,10 @@ def parse_chapter_cards(text: str) -> list[dict[str, object]]:
     return [card for card in normalized if not is_placeholder_card(card)]
 
 
+def parse_thread_registry(text: str) -> list[dict[str, object]]:
+    return normalize_thread_registry(json.loads(text))
+
+
 def is_placeholder_card(card: dict[str, object]) -> bool:
     number = ensure_int(card.get("number"), default=0)
     if ensure_string(card.get("title")) != f"Chapter {number}":

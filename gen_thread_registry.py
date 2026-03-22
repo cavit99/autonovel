@@ -64,7 +64,7 @@ def read_required(path: Path) -> str:
         raise FileNotFoundError(f"required file not found: {path}") from exc
 
 
-def build_prompt(arc: str, chapter_cards: str, outline: str) -> str:
+def build_prompt(arc: str, chapter_cards: str) -> str:
     return f"""Create THREAD_REGISTRY.JSON for this novel.
 
 ARC OUTLINE:
@@ -72,9 +72,6 @@ ARC OUTLINE:
 
 CHAPTER CARDS:
 {chapter_cards[:5000]}
-
-LEGACY OUTLINE (if useful):
-{outline[:4000]}
 
 Return valid JSON as an array of thread objects with:
 - id
@@ -99,18 +96,28 @@ def derive_threads() -> list[dict[str, object]]:
     return derive_thread_registry_from_outline(legacy_outline)
 
 
-def generate_thread_registry(*, output_path: Path = DEFAULT_OUTPUT) -> list[dict[str, object]]:
-    try:
-        if not API_KEY:
-            raise RuntimeError("missing API key")
-        arc = read_required(readable_planning_artifact_path("arc_outline", BASE_DIR))
-        chapter_cards = read_required(readable_planning_artifact_path("chapter_cards", BASE_DIR))
-        outline = read_text_if_exists(readable_planning_artifact_path("outline", BASE_DIR))
-        raw = call_writer(build_prompt(arc, chapter_cards, outline))
-        threads = normalize_thread_registry(extract_json_object(raw))
-    except Exception as exc:
-        print(f"WARNING: gen_thread_registry.py falling back to derived thread registry: {exc}", file=sys.stderr)
-        threads = derive_threads()
+def import_threads_from_outline(*, output_path: Path = DEFAULT_OUTPUT) -> list[dict[str, object]]:
+    legacy_outline = read_text_if_exists(readable_planning_artifact_path("outline", BASE_DIR))
+    if not legacy_outline.strip():
+        raise RuntimeError("planning/outline.md is missing or empty; cannot import thread registry")
+    threads = derive_threads()
+    ensure_parent_dir(output_path)
+    output_path.write_text(json.dumps(threads, indent=2) + "\n")
+    return threads
+
+
+def generate_thread_registry(
+    *, output_path: Path = DEFAULT_OUTPUT, import_from_outline: bool = False
+) -> list[dict[str, object]]:
+    if import_from_outline:
+        return import_threads_from_outline(output_path=output_path)
+
+    if not API_KEY:
+        raise RuntimeError("missing API key")
+    arc = read_required(readable_planning_artifact_path("arc_outline", BASE_DIR))
+    chapter_cards = read_required(readable_planning_artifact_path("chapter_cards", BASE_DIR))
+    raw = call_writer(build_prompt(arc, chapter_cards))
+    threads = normalize_thread_registry(extract_json_object(raw))
 
     ensure_parent_dir(output_path)
     output_path.write_text(json.dumps(threads, indent=2) + "\n")
@@ -119,19 +126,21 @@ def generate_thread_registry(*, output_path: Path = DEFAULT_OUTPUT) -> list[dict
 
 def load_thread_registry(path: Path) -> list[dict[str, object]]:
     if path.exists():
-        try:
-            return normalize_thread_registry(json.loads(path.read_text()))
-        except json.JSONDecodeError:
-            return derive_threads()
-    return derive_threads()
+        return normalize_thread_registry(json.loads(path.read_text()))
+    return []
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate the PR2 thread registry artifact")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Where to write thread_registry.json")
+    parser.add_argument(
+        "--import-from-outline",
+        action="store_true",
+        help="Explicitly derive thread_registry.json from the legacy planning/outline.md compatibility artifact",
+    )
     args = parser.parse_args()
 
-    threads = generate_thread_registry(output_path=args.output)
+    threads = generate_thread_registry(output_path=args.output, import_from_outline=args.import_from_outline)
     print(f"Saved thread registry to {args.output}", file=sys.stderr)
     print(json.dumps(threads, indent=2))
 

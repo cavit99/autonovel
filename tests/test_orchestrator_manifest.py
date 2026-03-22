@@ -129,6 +129,266 @@ class OrchestratorManifestTests(unittest.TestCase):
         self.assertEqual(manifest["planned_chapter_count"], 0)
         self.assertEqual(issues, [])
 
+    def test_manifest_planned_chapter_count_does_not_backfill_from_outline_when_cards_file_exists(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
+            (root / "chapters").mkdir()
+            (root / "eval_logs").mkdir()
+            (root / "edit_logs").mkdir()
+
+            (planning / "seed.md").write_text("A seed\n", encoding="utf-8")
+            (planning / "chapter_cards.md").write_text(render_chapter_cards([]) + "\n", encoding="utf-8")
+            (planning / "outline.md").write_text(
+                "## Act 1\n\n### Ch 1: Legacy One\n- Beat\n\n### Ch 2: Legacy Two\n- Beat\n",
+                encoding="utf-8",
+            )
+
+            manifest = build_manifest_payload(root, phase="foundation")
+
+        self.assertEqual(manifest["planned_chapter_count"], 0)
+
+    def test_foundation_fails_immediately_when_chapter_cards_parse_empty(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
+            (root / "edit_logs").mkdir()
+            commands = []
+
+            def fake_uv_run_to_file(script, output_path, timeout=600):
+                commands.append(script)
+                if script == "gen_world.py":
+                    output_path.write_text("# World\n", encoding="utf-8")
+                elif script == "gen_characters.py --emit-engine":
+                    output_path.write_text("# Characters\n", encoding="utf-8")
+                    (planning / "character_engine.json").write_text("{}\n", encoding="utf-8")
+                return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+
+            def fake_uv_run(script, timeout=600, check=False):
+                commands.append(script)
+                if script == "gen_perspective.py":
+                    (planning / "perspective.md").write_text("# Perspective\n", encoding="utf-8")
+                elif script.startswith("discover_voice.py"):
+                    (planning / "voice.md").write_text("# Voice\n", encoding="utf-8")
+                    (planning / "voice_discovery.json").write_text("{}\n", encoding="utf-8")
+                elif script == "gen_arc.py":
+                    (planning / "arc_outline.md").write_text("# Arc Outline\n", encoding="utf-8")
+                elif script == "gen_chapter_cards.py":
+                    (planning / "chapter_cards.md").write_text(render_chapter_cards([]) + "\n", encoding="utf-8")
+                return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+
+            state = run_pipeline.default_state()
+            with (
+                patch.object(run_pipeline, "BASE_DIR", root),
+                patch.object(run_pipeline, "MANIFEST_PATH", root / "manifest.json"),
+                patch.object(run_pipeline, "uv_run_to_file", side_effect=fake_uv_run_to_file),
+                patch.object(run_pipeline, "uv_run", side_effect=fake_uv_run),
+                patch.object(run_pipeline, "save_state"),
+                patch.object(run_pipeline, "log_result"),
+                patch.object(run_pipeline, "restore_paths"),
+                patch.object(run_pipeline, "build_manifest_and_gate", return_value={}) as build_manifest_mock,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "parsed to 0 chapter cards"):
+                    run_pipeline.run_foundation(state)
+
+        self.assertEqual(
+            commands,
+            [
+                "gen_world.py",
+                "gen_characters.py --emit-engine",
+                "gen_perspective.py",
+                "discover_voice.py --trials 8",
+                "gen_arc.py",
+                "gen_chapter_cards.py",
+            ],
+        )
+        build_manifest_mock.assert_not_called()
+
+    def test_foundation_fails_immediately_when_thread_registry_is_empty(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
+            (root / "edit_logs").mkdir()
+            commands = []
+
+            def fake_uv_run_to_file(script, output_path, timeout=600):
+                commands.append(script)
+                if script == "gen_world.py":
+                    output_path.write_text("# World\n", encoding="utf-8")
+                elif script == "gen_characters.py --emit-engine":
+                    output_path.write_text("# Characters\n", encoding="utf-8")
+                    (planning / "character_engine.json").write_text("{}\n", encoding="utf-8")
+                return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+
+            def fake_uv_run(script, timeout=600, check=False):
+                commands.append(script)
+                if script == "gen_perspective.py":
+                    (planning / "perspective.md").write_text("# Perspective\n", encoding="utf-8")
+                elif script.startswith("discover_voice.py"):
+                    (planning / "voice.md").write_text("# Voice\n", encoding="utf-8")
+                    (planning / "voice_discovery.json").write_text("{}\n", encoding="utf-8")
+                elif script == "gen_arc.py":
+                    (planning / "arc_outline.md").write_text("# Arc Outline\n", encoding="utf-8")
+                elif script == "gen_chapter_cards.py":
+                    (planning / "chapter_cards.md").write_text(
+                        render_chapter_cards(
+                            [
+                                {
+                                    "number": 1,
+                                    "title": "Signals",
+                                    "goal": "Get proof",
+                                    "pressure": "Public corridor",
+                                    "reversal": "Witness refuses",
+                                    "aftermath": "Cass doubles down",
+                                    "irreversible_change": "Cass commits",
+                                }
+                            ]
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                elif script == "gen_thread_registry.py":
+                    (planning / "thread_registry.json").write_text("[]\n", encoding="utf-8")
+                return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+
+            state = run_pipeline.default_state()
+            with (
+                patch.object(run_pipeline, "BASE_DIR", root),
+                patch.object(run_pipeline, "MANIFEST_PATH", root / "manifest.json"),
+                patch.object(run_pipeline, "uv_run_to_file", side_effect=fake_uv_run_to_file),
+                patch.object(run_pipeline, "uv_run", side_effect=fake_uv_run),
+                patch.object(run_pipeline, "save_state"),
+                patch.object(run_pipeline, "log_result"),
+                patch.object(run_pipeline, "restore_paths"),
+                patch.object(run_pipeline, "build_manifest_and_gate", return_value={}) as build_manifest_mock,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "produced an empty .*thread_registry.json"):
+                    run_pipeline.run_foundation(state)
+
+        self.assertEqual(
+            commands,
+            [
+                "gen_world.py",
+                "gen_characters.py --emit-engine",
+                "gen_perspective.py",
+                "discover_voice.py --trials 8",
+                "gen_arc.py",
+                "gen_chapter_cards.py",
+                "gen_thread_registry.py",
+            ],
+        )
+        build_manifest_mock.assert_not_called()
+
+    def test_foundation_fails_immediately_when_outline_diverges_from_cards(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
+            (root / "edit_logs").mkdir()
+            commands = []
+
+            def fake_uv_run_to_file(script, output_path, timeout=600):
+                commands.append(script)
+                if script == "gen_world.py":
+                    output_path.write_text("# World\n", encoding="utf-8")
+                elif script == "gen_characters.py --emit-engine":
+                    output_path.write_text("# Characters\n", encoding="utf-8")
+                    (planning / "character_engine.json").write_text("{}\n", encoding="utf-8")
+                return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+
+            def fake_uv_run(script, timeout=600, check=False):
+                commands.append(script)
+                if script == "gen_perspective.py":
+                    (planning / "perspective.md").write_text("# Perspective\n", encoding="utf-8")
+                elif script.startswith("discover_voice.py"):
+                    (planning / "voice.md").write_text("# Voice\n", encoding="utf-8")
+                    (planning / "voice_discovery.json").write_text("{}\n", encoding="utf-8")
+                elif script == "gen_arc.py":
+                    (planning / "arc_outline.md").write_text("# Arc Outline\n", encoding="utf-8")
+                elif script == "gen_chapter_cards.py":
+                    (planning / "chapter_cards.md").write_text(
+                        render_chapter_cards(
+                            [
+                                {
+                                    "number": 1,
+                                    "title": "Signals",
+                                    "goal": "Get proof",
+                                    "pressure": "Public corridor",
+                                    "reversal": "Witness refuses",
+                                    "aftermath": "Cass doubles down",
+                                    "irreversible_change": "Cass commits",
+                                },
+                                {
+                                    "number": 2,
+                                    "title": "Aftershock",
+                                    "goal": "Hide the evidence",
+                                    "pressure": "Guild closes in",
+                                    "reversal": "The ally defects",
+                                    "aftermath": "Cass is cornered",
+                                    "irreversible_change": "Cass loses cover",
+                                },
+                            ]
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                elif script == "gen_thread_registry.py":
+                    (planning / "thread_registry.json").write_text(
+                        json.dumps(
+                            [
+                                {
+                                    "id": "proof",
+                                    "description": "Cass still needs proof",
+                                    "type": "plot",
+                                    "first_seen": 1,
+                                    "payoff": 2,
+                                    "required": True,
+                                }
+                            ],
+                            indent=2,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                elif script == "gen_outline_part2.py":
+                    (planning / "outline.md").write_text(
+                        "## Act 1\n\n### Ch 1: Wrong Title\n- Beat\n\n### Ch 2: Aftershock\n- Beat\n\n## Foreshadowing Ledger\n",
+                        encoding="utf-8",
+                    )
+                return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+
+            state = run_pipeline.default_state()
+            with (
+                patch.object(run_pipeline, "BASE_DIR", root),
+                patch.object(run_pipeline, "MANIFEST_PATH", root / "manifest.json"),
+                patch.object(run_pipeline, "uv_run_to_file", side_effect=fake_uv_run_to_file),
+                patch.object(run_pipeline, "uv_run", side_effect=fake_uv_run),
+                patch.object(run_pipeline, "save_state"),
+                patch.object(run_pipeline, "log_result"),
+                patch.object(run_pipeline, "restore_paths"),
+                patch.object(run_pipeline, "build_manifest_and_gate", return_value={}) as build_manifest_mock,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "title mismatch for chapter 1"):
+                    run_pipeline.run_foundation(state)
+
+        self.assertEqual(
+            commands,
+            [
+                "gen_world.py",
+                "gen_characters.py --emit-engine",
+                "gen_perspective.py",
+                "discover_voice.py --trials 8",
+                "gen_arc.py",
+                "gen_chapter_cards.py",
+                "gen_thread_registry.py",
+                "gen_outline_part2.py",
+            ],
+        )
+        build_manifest_mock.assert_not_called()
+
     def test_deterministic_variant_selection_prefers_cleaner_variant(self):
         candidates = [
             {
@@ -187,7 +447,22 @@ class OrchestratorManifestTests(unittest.TestCase):
                         encoding="utf-8",
                     )
                 elif script == "gen_thread_registry.py":
-                    (planning / "thread_registry.json").write_text("[]\n", encoding="utf-8")
+                    (planning / "thread_registry.json").write_text(
+                        json.dumps(
+                            [
+                                {
+                                    "id": "proof",
+                                    "description": "Need proof",
+                                    "type": "plot",
+                                    "first_seen": 1,
+                                    "payoff": 1,
+                                    "required": True,
+                                }
+                            ]
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
                 elif script == "gen_outline_part2.py":
                     (planning / "outline.md").write_text(
                         "### Ch 1: One\n\n- BEATS:\n- Something happens.\n\n## Foreshadowing Ledger\n- none\n",

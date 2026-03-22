@@ -111,21 +111,30 @@ def derive_arc() -> dict[str, object]:
     return derive_arc_from_outline(legacy_outline)
 
 
-def generate_arc(*, output_path: Path = DEFAULT_OUTPUT) -> dict[str, object]:
-    try:
-        if not API_KEY:
-            raise RuntimeError("missing API key")
-        seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
-        world = read_required(readable_planning_artifact_path("world", BASE_DIR))
-        characters = read_required(readable_planning_artifact_path("characters", BASE_DIR))
-        perspective = read_required(readable_planning_artifact_path("perspective", BASE_DIR))
-        mystery = read_required(BASE_DIR / "MYSTERY.md")
-        voice = read_required(readable_planning_artifact_path("voice", BASE_DIR))
-        raw = call_writer(build_prompt(seed, world, characters, perspective, mystery, voice))
-        arc = normalize_arc_payload(extract_json_object(raw))
-    except Exception as exc:
-        print(f"WARNING: gen_arc.py falling back to derived arc outline: {exc}", file=sys.stderr)
-        arc = derive_arc()
+def import_arc_from_outline(*, output_path: Path = DEFAULT_OUTPUT) -> dict[str, object]:
+    legacy_outline = read_text_if_exists(readable_planning_artifact_path("outline", BASE_DIR))
+    if not legacy_outline.strip():
+        raise RuntimeError("planning/outline.md is missing or empty; cannot import arc outline")
+    arc = derive_arc()
+    ensure_parent_dir(output_path)
+    output_path.write_text(render_arc_outline(arc) + "\n")
+    return arc
+
+
+def generate_arc(*, output_path: Path = DEFAULT_OUTPUT, import_from_outline: bool = False) -> dict[str, object]:
+    if import_from_outline:
+        return import_arc_from_outline(output_path=output_path)
+
+    if not API_KEY:
+        raise RuntimeError("missing API key")
+    seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
+    world = read_required(readable_planning_artifact_path("world", BASE_DIR))
+    characters = read_required(readable_planning_artifact_path("characters", BASE_DIR))
+    perspective = read_required(readable_planning_artifact_path("perspective", BASE_DIR))
+    mystery = read_required(BASE_DIR / "MYSTERY.md")
+    voice = read_required(readable_planning_artifact_path("voice", BASE_DIR))
+    raw = call_writer(build_prompt(seed, world, characters, perspective, mystery, voice))
+    arc = normalize_arc_payload(extract_json_object(raw))
 
     ensure_parent_dir(output_path)
     output_path.write_text(render_arc_outline(arc) + "\n")
@@ -135,15 +144,20 @@ def generate_arc(*, output_path: Path = DEFAULT_OUTPUT) -> dict[str, object]:
 def load_arc(path: Path) -> dict[str, object]:
     if path.exists():
         return parse_arc_outline(path.read_text())
-    return derive_arc()
+    return normalize_arc_payload({})
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate the PR2 arc outline artifact")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Where to write arc_outline.md")
+    parser.add_argument(
+        "--import-from-outline",
+        action="store_true",
+        help="Explicitly derive arc_outline.md from the legacy planning/outline.md compatibility artifact",
+    )
     args = parser.parse_args()
 
-    arc = generate_arc(output_path=args.output)
+    arc = generate_arc(output_path=args.output, import_from_outline=args.import_from_outline)
     print(f"Saved arc outline to {args.output}", file=sys.stderr)
     print(render_arc_outline(arc))
 
