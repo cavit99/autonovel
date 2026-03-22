@@ -23,6 +23,7 @@ from foundation_mind import (
     extract_json_object,
     normalize_character_engine,
 )
+from anthropic_api import message_text_from_response
 from project_paths import (
     ensure_parent_dir,
     planning_artifact_path,
@@ -69,8 +70,7 @@ def call_writer(prompt: str, *, max_tokens: int = 16000, temperature: float = 0.
         "messages": [{"role": "user", "content": prompt}],
     }
     resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return message_text_from_response(resp, context="gen_characters writer request")
 
 
 def extract_voice_part2(voice_text: str) -> str:

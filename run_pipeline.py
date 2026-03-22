@@ -162,6 +162,15 @@ def step(text: str) -> None:
 # Helpers: subprocess execution
 # ---------------------------------------------------------------------------
 
+STDERR_PREVIEW_CHARS = 1600
+
+
+def preview_stderr(text: str, limit: int = STDERR_PREVIEW_CHARS) -> str:
+    text = text or ""
+    if len(text) <= limit:
+        return text
+    return "...<stderr truncated>\n" + text[-limit:]
+
 def run_tool(cmd: str, timeout: int = 600, check: bool = False) -> subprocess.CompletedProcess:
     step(f"RUN: {cmd}")
     try:
@@ -179,9 +188,9 @@ def run_tool(cmd: str, timeout: int = 600, check: bool = False) -> subprocess.Co
 
     if result.returncode != 0:
         print(f"    WARN: exit code {result.returncode}")
-        stderr_preview = (result.stderr or "")[:300]
-        if stderr_preview:
-            print(f"    stderr: {stderr_preview}")
+        stderr_text = preview_stderr(result.stderr or "")
+        if stderr_text:
+            print(f"    stderr: {stderr_text}")
         if check:
             raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
     return result
@@ -203,9 +212,9 @@ def run_tool_args(args: list[str], timeout: int = 600, check: bool = False) -> s
 
     if result.returncode != 0:
         print(f"    WARN: exit code {result.returncode}")
-        stderr_preview = (result.stderr or "")[:300]
-        if stderr_preview:
-            print(f"    stderr: {stderr_preview}")
+        stderr_text = preview_stderr(result.stderr or "")
+        if stderr_text:
+            print(f"    stderr: {stderr_text}")
         if check:
             raise subprocess.CalledProcessError(result.returncode, args, result.stdout, result.stderr)
     return result

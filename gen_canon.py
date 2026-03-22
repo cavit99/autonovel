@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+from anthropic_api import message_text_from_response
 from project_paths import readable_planning_artifact_path, require_seed_path
 
 BASE_DIR = Path(__file__).parent
@@ -35,8 +36,7 @@ def call_writer(prompt, max_tokens=16000):
         "messages": [{"role": "user", "content": prompt}],
     }
     resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return message_text_from_response(resp, context="gen_canon writer request")
 
 world = readable_planning_artifact_path("world", BASE_DIR).read_text(encoding="utf-8")
 characters = readable_planning_artifact_path("characters", BASE_DIR).read_text(encoding="utf-8")

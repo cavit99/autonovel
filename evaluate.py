@@ -33,6 +33,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
         return False
 load_dotenv(BASE_DIR / ".env")
 
+from anthropic_api import message_text_from_response
 from evidence_tools import load_json, render_evidence_pack
 from project_paths import readable_planning_artifact_path
 
@@ -344,8 +345,7 @@ def call_judge(prompt, max_tokens=2000):
         json=payload,
         timeout=180,
     )
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return message_text_from_response(resp, context="evaluate judge request")
 
 
 def parse_json_response(text):

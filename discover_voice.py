@@ -15,6 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
     def load_dotenv(*_args, **_kwargs):
         return False
 
+from anthropic_api import message_text_from_response
 from foundation_mind import (
     available_registers,
     extract_json_object,
@@ -70,8 +71,7 @@ def call_model(*, prompt: str, system: str, model: str, temperature: float, max_
         "messages": [{"role": "user", "content": prompt}],
     }
     resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return message_text_from_response(resp, context=f"discover_voice model request ({model})")
 
 
 def read_required(path: Path) -> str:
