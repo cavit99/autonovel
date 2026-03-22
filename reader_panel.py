@@ -30,6 +30,7 @@ load_dotenv(BASE_DIR / ".env")
 JUDGE_MODEL = os.environ.get("AUTONOVEL_JUDGE_MODEL", "claude-opus-4-6")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+ANTHROPIC_BETA = "context-1m-2025-08-07"
 
 READERS = {
     "editor": {
@@ -151,6 +152,7 @@ def call_reader(reader_key: str, prompt: str) -> dict:
     headers = {
         "x-api-key": API_KEY,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": ANTHROPIC_BETA,
         "content-type": "application/json",
     }
     payload = {

@@ -245,6 +245,85 @@ class OrchestratorManifestTests(unittest.TestCase):
         self.assertEqual(updated["chapters_drafted"], 1)
         self.assertEqual(commands[:3], ["plan_scene.py 1 --variants 4", "draft_chapter.py 1 --mode auto", "evaluate.py --chapter 1"])
 
+    def test_drafting_keeps_final_failed_attempt_for_new_chapter_fallback(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            chapters_dir = root / "chapters"
+            scene_options_dir = root / "scene_options"
+            story_state_dir = root / "state" / "story_state"
+            eval_logs_dir = root / "eval_logs"
+            chapters_dir.mkdir(parents=True)
+            scene_options_dir.mkdir(parents=True)
+            story_state_dir.mkdir(parents=True)
+            eval_logs_dir.mkdir(parents=True)
+
+            commands = []
+            restore_calls = []
+            draft_attempt = 0
+            scores = iter([5.1, 5.2, 5.3, 5.4, 5.5])
+
+            def fake_uv_run(script, timeout=600, check=False):
+                nonlocal draft_attempt
+                commands.append(script)
+                if script == "plan_scene.py 1 --variants 4":
+                    (scene_options_dir / "ch_01.json").write_text("[]\n", encoding="utf-8")
+                elif script == "draft_chapter.py 1 --mode auto":
+                    draft_attempt += 1
+                    (chapters_dir / "ch_01.md").write_text(
+                        "# Chapter 1\n\n"
+                        + (f"Attempt {draft_attempt} should stay on disk if fallback keeps this draft.\n" * 8),
+                        encoding="utf-8",
+                    )
+                elif script == "advance_state.py --chapter 1":
+                    (story_state_dir / "ch_01.json").write_text('{"chapter": 1}\n', encoding="utf-8")
+                return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
+
+            def fake_evaluate_chapter(chapter_num, include_risk=False):
+                return next(scores), {}
+
+            def fake_restore_paths(paths):
+                restore_calls.append([path.name for path in paths])
+                for path in paths:
+                    path.unlink(missing_ok=True)
+
+            state = run_pipeline.default_state()
+            state["phase"] = "drafting"
+            state["chapters_total"] = 1
+            chapter_path = chapters_dir / "ch_01.md"
+            with (
+                patch.object(run_pipeline, "BASE_DIR", root),
+                patch.object(run_pipeline, "CHAPTERS_DIR", chapters_dir),
+                patch.object(run_pipeline, "SCENE_OPTIONS_DIR", scene_options_dir),
+                patch.object(run_pipeline, "STORY_STATE_DIR", story_state_dir),
+                patch.object(run_pipeline, "EVAL_LOGS_DIR", eval_logs_dir),
+                patch.object(run_pipeline, "uv_run", side_effect=fake_uv_run),
+                patch.object(run_pipeline, "evaluate_chapter", side_effect=fake_evaluate_chapter),
+                patch.object(run_pipeline, "build_manifest_and_gate", return_value={}) as build_manifest_mock,
+                patch.object(run_pipeline, "git_add_commit", return_value="forced123") as commit_mock,
+                patch.object(run_pipeline, "save_state"),
+                patch.object(run_pipeline, "log_result"),
+                patch.object(run_pipeline, "restore_paths", side_effect=fake_restore_paths),
+                patch.object(run_pipeline, "CRITICAL_SCENE_THRESHOLD", 0.0),
+                patch.object(run_pipeline, "is_critical_chapter", return_value=False),
+                patch.object(run_pipeline, "risk_chapters", return_value=[]),
+            ):
+                updated = run_pipeline.run_drafting(state)
+                chapter_exists = chapter_path.exists()
+                chapter_text = chapter_path.read_text(encoding="utf-8") if chapter_exists else ""
+                snapshot_exists = (story_state_dir / "ch_01.json").exists()
+
+        self.assertEqual(updated["phase"], "revision")
+        self.assertEqual(updated["chapters_drafted"], 1)
+        self.assertTrue(chapter_exists)
+        self.assertIn("Attempt 5", chapter_text)
+        self.assertEqual(len(restore_calls), run_pipeline.MAX_CHAPTER_ATTEMPTS - 1)
+        self.assertEqual(build_manifest_mock.call_count, run_pipeline.MAX_CHAPTER_ATTEMPTS + 1)
+        self.assertTrue(snapshot_exists)
+        self.assertEqual(commands.count("advance_state.py --chapter 1"), 1)
+        commit_mock.assert_called_once_with(
+            f"ch01: best-effort after {run_pipeline.MAX_CHAPTER_ATTEMPTS} attempts"
+        )
+
     def test_git_add_commit_uses_scoped_pathspecs_and_argument_safe_commit_message(self):
         commands = []
         message = 'revision cycle "safe" $(touch should_not_run)'

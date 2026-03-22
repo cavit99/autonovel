@@ -74,6 +74,18 @@ class GenericSeedSupportTests(unittest.TestCase):
         self.assertNotIn("Cass's POV", prompt)
         self.assertNotIn("House of Bells", prompt)
 
+    def test_voice_fingerprint_counts_each_section_break_once(self):
+        with TemporaryDirectory() as tmpdir:
+            chapter_path = Path(tmpdir) / "ch_01.md"
+            chapter_path.write_text(
+                "# Chapter 1\n\nAlpha sentence here.\n\n---\n\nBeta sentence here.\n---\nGamma sentence here.\n",
+                encoding="utf-8",
+            )
+
+            metrics = voice_fingerprint.analyze_chapter(chapter_path)
+
+        self.assertEqual(metrics["section_breaks"], 2)
+
     def test_voice_fingerprint_main_handles_sparse_chapters(self):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -98,7 +110,10 @@ class GenericSeedSupportTests(unittest.TestCase):
         self.assertIn("ch_01", payload["chapters"])
         self.assertIn("ch_03", payload["chapters"])
         self.assertNotIn("ch_02", payload["chapters"])
-        self.assertIn("novel_average", payload["chapters"])
+        self.assertEqual(set(payload["chapters"]), {"ch_01", "ch_03"})
+        self.assertIn("novel_average", payload)
+        self.assertIsInstance(payload["novel_average"], dict)
+        self.assertIn("word_count", payload["novel_average"])
 
     def test_clear_from_scratch_artifacts_keeps_seed_and_user_example_inputs(self):
         with TemporaryDirectory() as tmpdir:

@@ -62,7 +62,7 @@ _CHAPTER_BLOCK_RE = re.compile(
 )
 _CHAPTER_CARD_HEADING_RE = re.compile(r"^##\s*Ch(?:apter)?\s*(\d+)\s*:?\s*(.*)$")
 _ACT_HEADING_RE = re.compile(r"^##\s*(Act[^:\n]*:?)(.*)$", re.MULTILINE)
-_THREAD_ROW_RE = re.compile(r"^\|(.+?)\|(.+?)\|(.+?)\|(.+?)\|(.+?)\|$", re.MULTILINE)
+_THREAD_ROW_RE = re.compile(r"^\|(.*)\|$", re.MULTILINE)
 
 
 def ensure_string(value: object) -> str:
@@ -537,19 +537,15 @@ def act_name_for_chapter(chapter_number: int, acts: list[dict[str, object]]) -> 
             return "Act 2"
         return "Act 3"
 
-    index = min(len(acts) - 1, 0)
     if len(acts) == 1:
         return acts[0]["name"]
     if len(acts) == 2:
         return acts[0]["name"] if chapter_number <= 12 else acts[1]["name"]
-    if len(acts) >= 3:
-        if chapter_number <= 8:
-            index = 0
-        elif chapter_number <= 16:
-            index = 1
-        else:
-            index = 2
-    return acts[index]["name"]
+    if chapter_number <= 8:
+        return acts[0]["name"]
+    if chapter_number <= 16:
+        return acts[1]["name"]
+    return acts[2]["name"]
 
 
 def derive_arc_from_outline(text: str) -> dict[str, object]:
@@ -600,26 +596,33 @@ def derive_chapter_cards_from_outline(text: str) -> list[dict[str, object]]:
 def derive_thread_registry_from_outline(text: str) -> list[dict[str, object]]:
     threads = []
     for match in _THREAD_ROW_RE.finditer(text):
-        columns = [ensure_string(column) for column in match.groups()]
+        columns = [ensure_string(column) for column in match.group(1).split("|")]
         header = columns[0].lower()
         if header in {"id", "thread", "----", "------"}:
             continue
         if len(columns) < 5:
             continue
-        if columns[0] and columns[1]:
+        if len(columns) >= 6:
             maybe_id = safe_slug(columns[0])
             description = columns[1]
             planted_text = columns[2]
             reinforced_text = columns[3]
             payoff_text = columns[4]
-            thread_type = columns[5] if len(columns) > 5 else "plot"
+            thread_type = columns[5]
         else:
+            is_status_layout = bool(first_chapter_number(columns[1]) or first_chapter_number(columns[2]))
             maybe_id = safe_slug(columns[0])
-            description = columns[0]
-            planted_text = columns[1]
-            reinforced_text = columns[2]
-            payoff_text = columns[3]
-            thread_type = columns[4] if len(columns) > 4 else "plot"
+            if is_status_layout:
+                description = columns[3]
+                planted_text = columns[1]
+                reinforced_text = ""
+                payoff_text = columns[2]
+            else:
+                description = columns[1]
+                planted_text = columns[2]
+                reinforced_text = columns[3]
+                payoff_text = columns[4]
+            thread_type = "plot"
         threads.append(
             {
                 "id": maybe_id,

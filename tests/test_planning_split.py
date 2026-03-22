@@ -191,13 +191,31 @@ goal: Get proof
 ## Foreshadowing Ledger
 | ID | Thread | Planted | Reinforced | Payoff | Type |
 |----|--------|---------|------------|--------|------|
-| bells_question | Bells question | Ch 2 | Ch 8, Ch 12 | Ch 22 | plot |
+| bells_question | Bells question | Ch 2 | Ch 8, Ch 12 | Ch 22 | echo |
 """
         threads = derive_thread_registry_from_outline(legacy)
         self.assertEqual(threads[0]["id"], "bells_question")
-        self.assertEqual(threads[0]["type"], "plot")
+        self.assertEqual(threads[0]["type"], "echo")
         self.assertEqual(threads[0]["planted"], 2)
         self.assertEqual(threads[0]["payoff"], 22)
+
+    def test_derive_thread_registry_from_rendered_legacy_outline_preserves_thread_types(self):
+        arc = {"title": "Signals", "acts": [], "major_reveals": [], "pressure_escalations": []}
+        cards = normalize_chapter_cards([{"number": 1, "title": "Signals", "goal": "Find proof"}])
+        threads = normalize_thread_registry(
+            [
+                {"id": "coin_echo", "description": "Coin echo", "type": "echo", "first_seen": 2, "payoff": 9},
+                {"id": "street_grit", "description": "Street grit", "type": "texture", "first_seen": 3, "payoff": 11},
+            ]
+        )
+
+        rendered = render_legacy_outline("Signals", arc, cards, threads)
+        imported_threads = derive_thread_registry_from_outline(rendered)
+
+        self.assertEqual(
+            [(thread["id"], thread["type"]) for thread in imported_threads],
+            [("coin_echo", "echo"), ("street_grit", "texture")],
+        )
 
     def test_render_legacy_outline_includes_cards_and_threads(self):
         arc = {"title": "Signals", "acts": [], "major_reveals": [], "pressure_escalations": []}

@@ -10,6 +10,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 try:
     from dotenv import load_dotenv
@@ -24,6 +25,7 @@ load_dotenv(BASE_DIR / ".env")
 SMELL_MODEL = os.environ.get("AUTONOVEL_SMELL_MODEL", os.environ.get("AUTONOVEL_JUDGE_MODEL", "claude-opus-4-6"))
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+ANTHROPIC_BETA = "context-1m-2025-08-07"
 
 PANELISTS = {
     "novelist": (
@@ -94,6 +96,7 @@ def call_panel(system: str, prompt: str) -> dict:
     headers = {
         "x-api-key": API_KEY,
         "anthropic-version": "2023-06-01",
+        "anthropic-beta": ANTHROPIC_BETA,
         "content-type": "application/json",
     }
     payload = {
@@ -107,6 +110,24 @@ def call_panel(system: str, prompt: str) -> dict:
     response.raise_for_status()
     raw = response.json()["content"][0]["text"].strip()
     return parse_json_blob(raw)
+
+
+def run_panelists(
+    prompt: str,
+    panel_call: Callable[[str, str], dict] | None = None,
+) -> tuple[dict[str, dict], dict[str, str]]:
+    results: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    panel_call = panel_call or call_panel
+
+    for key, system in PANELISTS.items():
+        try:
+            results[key] = panel_call(system, prompt)
+        except Exception as exc:
+            errors[key] = str(exc)
+            print(f"ERROR: humanity panelist '{key}' failed: {exc}", file=sys.stderr)
+
+    return results, errors
 
 
 def main() -> None:
@@ -133,17 +154,16 @@ def main() -> None:
         print("ERROR: ANTHROPIC_API_KEY not set", file=sys.stderr)
         sys.exit(1)
 
-    results = {}
-    for key, system in PANELISTS.items():
-        results[key] = call_panel(system, prompt)
-
     output = {
         "mode": "evidence",
         "model": SMELL_MODEL,
         "evidence_path": args.evidence,
         "generated_at": datetime.now().isoformat(),
-        "panelists": results,
     }
+    results, errors = run_panelists(prompt)
+    output["panelists"] = results
+    if errors:
+        output["panelist_errors"] = errors
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)

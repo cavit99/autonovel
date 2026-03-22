@@ -758,9 +758,12 @@ def run_drafting(state: dict) -> dict:
                 drafted = True
                 break
 
-            step(f"Score {score} did not meet chapter gate, restoring chapter attempt")
+            is_final_attempt = attempt == MAX_CHAPTER_ATTEMPTS
+            action = "preserving final chapter attempt for fallback" if is_final_attempt else "restoring chapter attempt"
+            step(f"Score {score} did not meet chapter gate, {action}")
             log_result("discarded", f"ch{ch:02d}", score, word_count, "discard", f"Chapter {ch} attempt {attempt}")
-            restore_paths([ch_file])
+            if not is_final_attempt:
+                restore_paths([ch_file])
             clear_variant_artifacts(ch)
 
         if not drafted:

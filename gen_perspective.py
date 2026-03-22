@@ -8,7 +8,11 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test runners
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 from foundation_mind import extract_json_object, render_perspective_markdown
 
