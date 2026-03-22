@@ -173,14 +173,55 @@ CONSEQUENCE_MARKERS = {
     "broke",
     "changed",
     "committed",
-    "decided",
     "ended",
     "left",
     "lost",
     "promised",
     "refused",
-    "turned",
     "vowed",
+}
+FRONTED_CONTEXT_WORDS = {
+    "after",
+    "as",
+    "at",
+    "before",
+    "because",
+    "beneath",
+    "by",
+    "during",
+    "in",
+    "inside",
+    "on",
+    "outside",
+    "over",
+    "through",
+    "under",
+    "until",
+    "while",
+    "with",
+    "within",
+}
+LEADING_PRONOUN_RE = re.compile(r'^\W*"?(he|she|they|i)\b', re.IGNORECASE)
+PLACE_ENTITY_LAST_TOKENS = {
+    "Alley",
+    "Arch",
+    "Bridge",
+    "Corridor",
+    "Court",
+    "Door",
+    "Gate",
+    "Hall",
+    "Harbor",
+    "Harbour",
+    "Lane",
+    "Market",
+    "Quarter",
+    "River",
+    "Square",
+    "Stair",
+    "Street",
+    "Tower",
+    "Yard",
 }
 
 
@@ -440,28 +481,56 @@ def contains_marker(text: str, markers: tuple[str, ...] | set[str]) -> bool:
     return any(re.search(rf"\b{re.escape(marker)}\b", lowered) for marker in markers)
 
 
-def extract_clause_from_sentence(sentence: str, markers: tuple[str, ...]) -> str:
-    lowered = sentence.lower()
+def find_marker_match(text: str, markers: tuple[str, ...] | set[str]):
+    lowered = text.lower()
     best_match = None
     for marker in markers:
         match = re.search(rf"\b{re.escape(marker)}\b", lowered)
-        if match and (best_match is None or match.start() < best_match.start()):
+        if match and (best_match is None or (match.start(), -len(marker)) < (best_match.start(), -len(best_match.group(0)))):
             best_match = match
+    return best_match
+
+
+def strip_fronted_context(sentence: str) -> str:
+    text = ensure_string(sentence)
+    if "," not in text:
+        return text
+    prefix, remainder = text.split(",", 1)
+    words = re.findall(r"[A-Za-z']+", prefix)
+    if not words:
+        return text
+    if words[0].lower() not in FRONTED_CONTEXT_WORDS or len(words) > 10:
+        return text
+    trimmed = remainder.strip()
+    return trimmed or text
+
+
+def trim_extracted_clause(clause: str) -> str:
+    cleaned = strip_fronted_context(clause.strip(" ,.;:-"))
+    cleaned = re.sub(r"^(that|if|whether|how)\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^(still|just|already|quietly|simply)\s+", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip(" ,.;:-")
+
+
+def extract_clause_from_sentence(sentence: str, markers: tuple[str, ...]) -> str:
+    best_match = find_marker_match(sentence, markers)
     if best_match is None:
         return ""
-    clause = sentence[best_match.end() :].strip(" ,.;:-")
-    clause = re.sub(r"^(that|if|whether)\s+", "", clause, flags=re.IGNORECASE)
+    clause = trim_extracted_clause(sentence[best_match.end() :])
     return sanitize_note(clause or sentence)
 
 
 def pressure_excerpt(sentence: str) -> str:
-    lowered = sentence.lower()
-    for marker in PRESSURE_EXCERPT_MARKERS:
-        match = re.search(rf"\b{re.escape(marker)}\b", lowered)
-        if match:
-            excerpt = sentence[match.start() :].strip(" ,.;:-")
-            return sanitize_note(excerpt or sentence)
+    match = find_marker_match(sentence, PRESSURE_EXCERPT_MARKERS)
+    if match:
+        excerpt = sentence[match.start() :].strip(" ,.;:-")
+        return sanitize_note(excerpt or sentence)
     return sanitize_note(sentence)
+
+
+def leading_named_subject(sentence: str) -> str:
+    match = re.match(r'^\W*"?(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b(?:\'s)?', sentence)
+    return ensure_string(match.group("name")) if match else ""
 
 
 def resolve_sentence_subject(
@@ -470,17 +539,20 @@ def resolve_sentence_subject(
     previous_subject: str,
     focus: str,
 ) -> str:
-    leading_match = re.match(r'^\W*"?(?P<name>[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', sentence)
-    if leading_match:
-        leading = ensure_string(leading_match.group("name"))
+    main_clause = strip_fronted_context(sentence)
+    leading = leading_named_subject(main_clause) or leading_named_subject(sentence)
+    if leading:
         for name in known_names:
             if leading == name or leading == name.split()[0]:
                 return name
 
+    if LEADING_PRONOUN_RE.match(main_clause):
+        return previous_subject or focus
+
     positions = []
     for name in known_names:
         for variant in name_variants(name):
-            match = re.search(rf"\b{re.escape(variant)}\b", sentence)
+            match = re.search(rf"\b{re.escape(variant)}\b", main_clause)
             if match:
                 positions.append((match.start(), name))
                 break
@@ -488,9 +560,20 @@ def resolve_sentence_subject(
         positions.sort(key=lambda item: (item[0], item[1]))
         return positions[0][1]
 
-    if re.match(r'^\W*"?(He|She|They|I)\b', sentence):
+    if LEADING_PRONOUN_RE.match(sentence):
         return previous_subject or focus
     return ""
+
+
+def is_probable_person_entity(candidate: str) -> bool:
+    tokens = candidate.split()
+    if not tokens:
+        return False
+    if len(tokens) == 1 and tokens[0].lower() in FRONTED_CONTEXT_WORDS:
+        return False
+    if len(tokens) > 1 and tokens[-1] in PLACE_ENTITY_LAST_TOKENS and tokens[0] not in ALLOWED_NAME_TITLES:
+        return False
+    return True
 
 
 def extract_named_entities(sentence: str) -> list[str]:
@@ -506,12 +589,44 @@ def extract_named_entities(sentence: str) -> list[str]:
             continue
         if len(tokens) > 1 and first in PROSE_NAME_STOPWORDS and first not in ALLOWED_NAME_TITLES:
             continue
+        if not is_probable_person_entity(candidate):
+            continue
         lowered = candidate.lower()
         if lowered in seen:
             continue
         seen.add(lowered)
         entities.append(candidate)
     return entities
+
+
+def blank_prose_story_signals() -> dict[str, object]:
+    return {
+        "knowledge_state": {},
+        "minor_character_memory": {},
+        "active_pressures": [],
+        "institutional_motion": [],
+        "offstage_consequences": [],
+    }
+
+
+def extract_subject_story_signals(sentence: str) -> dict[str, object]:
+    return {
+        "knows": [extract_clause_from_sentence(sentence, KNOWLEDGE_MARKERS)],
+        "suspects": [extract_clause_from_sentence(sentence, SUSPECT_MARKERS)],
+        "hides": [extract_clause_from_sentence(sentence, HIDE_MARKERS)],
+        "misreads": [extract_clause_from_sentence(sentence, MISREAD_MARKERS)],
+        "self_story": extract_clause_from_sentence(sentence, SELF_STORY_MARKERS),
+    }
+
+
+def extract_consequence_signal(sentence: str, subject: str) -> str:
+    if find_marker_match(sentence, SELF_STORY_MARKERS):
+        return ""
+    if not find_marker_match(sentence, CONSEQUENCE_MARKERS):
+        return ""
+    if subject or contains_marker(sentence, INSTITUTIONAL_MARKERS):
+        return sanitize_note(sentence)
+    return ""
 
 
 def extract_prose_story_signals(
@@ -522,13 +637,7 @@ def extract_prose_story_signals(
 ) -> dict[str, object]:
     sentences = prose_sentences(chapter_text)
     if not sentences:
-        return {
-            "knowledge_state": {},
-            "minor_character_memory": {},
-            "active_pressures": [],
-            "institutional_motion": [],
-            "offstage_consequences": [],
-        }
+        return blank_prose_story_signals()
 
     known_names = sorted({ensure_string(name) for name in character_engine.keys() if ensure_string(name)})
     if focus and focus != "POV":
@@ -548,21 +657,13 @@ def extract_prose_story_signals(
         if subject:
             previous_subject = subject
             state = knowledge_state.setdefault(subject, blank_character_state())
-            knows = extract_clause_from_sentence(sentence, KNOWLEDGE_MARKERS)
-            if knows:
-                state["knows"].append(knows)
-            suspects = extract_clause_from_sentence(sentence, SUSPECT_MARKERS)
-            if suspects:
-                state["suspects"].append(suspects)
-            misreads = extract_clause_from_sentence(sentence, MISREAD_MARKERS)
-            if misreads:
-                state["misreads"].append(misreads)
-            hides = extract_clause_from_sentence(sentence, HIDE_MARKERS)
-            if hides:
-                state["hides"].append(hides)
-            self_story = extract_clause_from_sentence(sentence, SELF_STORY_MARKERS)
-            if self_story:
-                state["self_story"] = self_story
+            subject_signals = extract_subject_story_signals(sentence)
+            state["knows"].extend(ensure_string_list(subject_signals["knows"]))
+            state["suspects"].extend(ensure_string_list(subject_signals["suspects"]))
+            state["hides"].extend(ensure_string_list(subject_signals["hides"]))
+            state["misreads"].extend(ensure_string_list(subject_signals["misreads"]))
+            if ensure_string(subject_signals["self_story"]):
+                state["self_story"] = ensure_string(subject_signals["self_story"])
 
         if contains_marker(sentence, PRESSURE_MARKERS):
             excerpt = pressure_excerpt(sentence)
@@ -570,8 +671,9 @@ def extract_prose_story_signals(
                 active_pressures.append(excerpt)
         if contains_marker(sentence, INSTITUTIONAL_MARKERS):
             institutional_motion.append(sanitize_note(sentence))
-        if contains_marker(sentence, CONSEQUENCE_MARKERS):
-            offstage_consequences.append(sanitize_note(sentence))
+        consequence = extract_consequence_signal(sentence, subject)
+        if consequence:
+            offstage_consequences.append(consequence)
 
         for name in extract_named_entities(sentence):
             if focus and name.lower() == focus.lower():
@@ -592,9 +694,6 @@ def extract_prose_story_signals(
         if len(words & prose_words) >= threshold:
             active_pressures.append(description)
             institutional_motion.append(description)
-
-    if not offstage_consequences and sentences:
-        offstage_consequences.append(sanitize_note(sentences[-1]))
 
     for details in knowledge_state.values():
         details["knows"] = dedupe_strings(details["knows"])[-4:]
@@ -659,6 +758,20 @@ def build_story_state(
     ambiguity = sanitize_note(chapter_card.get("allowed_ambiguity", ""))
     prose_signals = extract_prose_story_signals(chapter_text, focus, character_engine, thread_window)
 
+    knowledge_state = merge_knowledge_state(previous["knowledge_state"], prose_signals["knowledge_state"])
+    knowledge_state[focus] = apply_focus_fallback_priors(
+        knowledge_state.get(focus, blank_character_state()),
+        reversal,
+        ambiguity,
+        aftermath,
+    )
+    minor_character_memory = merge_minor_character_memory(
+        previous["minor_character_memory"],
+        prose_signals["minor_character_memory"],
+        chapter_num,
+    )
+    active_pressures = merge_active_pressures(previous["active_pressures"], prose_signals["active_pressures"], pressure)
+
     world_clock = previous["world_clock"]
     institutional_motion = list(world_clock["institutional_motion"])
     if prose_signals["institutional_motion"]:
@@ -670,42 +783,6 @@ def build_story_state(
         offstage_consequences.extend(prose_signals["offstage_consequences"])
     elif irreversible:
         offstage_consequences.append(irreversible)
-
-    knowledge_state = clone_knowledge_state(previous["knowledge_state"])
-    for name, signals in prose_signals["knowledge_state"].items():
-        state = knowledge_state.get(name, blank_character_state())
-        state["knows"] = dedupe_strings(state["knows"] + ensure_string_list(signals.get("knows")))
-        state["suspects"] = dedupe_strings(state["suspects"] + ensure_string_list(signals.get("suspects")))
-        state["hides"] = dedupe_strings(state["hides"] + ensure_string_list(signals.get("hides")))
-        state["misreads"] = dedupe_strings(state["misreads"] + ensure_string_list(signals.get("misreads")))
-        if ensure_string(signals.get("self_story")):
-            state["self_story"] = ensure_string(signals["self_story"])
-        knowledge_state[name] = state
-
-    focus_state = knowledge_state.get(
-        focus,
-        blank_character_state(),
-    )
-    if reversal and not focus_state["knows"]:
-        focus_state["knows"] = dedupe_strings(focus_state["knows"] + [reversal])
-    if ambiguity and not focus_state["misreads"]:
-        focus_state["misreads"] = dedupe_strings(focus_state["misreads"] + [ambiguity])
-    if aftermath and not ensure_string(focus_state.get("self_story")):
-        focus_state["self_story"] = aftermath
-    knowledge_state[focus] = focus_state
-
-    active_pressures = list(previous["active_pressures"])
-    if prose_signals["active_pressures"]:
-        active_pressures.extend(prose_signals["active_pressures"])
-    elif pressure:
-        active_pressures.append(pressure)
-
-    minor_character_memory = clone_minor_character_memory(previous["minor_character_memory"], chapter_num)
-    for name, details in prose_signals["minor_character_memory"].items():
-        memory = minor_character_memory.get(name, {"last_seen": chapter_num, "remembers": []})
-        memory["last_seen"] = chapter_num
-        memory["remembers"] = dedupe_strings(memory["remembers"] + ensure_string_list(details.get("remembers")))
-        minor_character_memory[name] = memory
 
     return normalize_story_state(
         {
@@ -723,6 +800,67 @@ def build_story_state(
         },
         chapter_num,
     )
+
+
+def merge_knowledge_state(
+    previous_knowledge: dict[str, object],
+    prose_knowledge: dict[str, object],
+) -> dict[str, dict[str, object]]:
+    knowledge_state = clone_knowledge_state(previous_knowledge)
+    for name, signals in prose_knowledge.items():
+        state = knowledge_state.get(name, blank_character_state())
+        state["knows"] = dedupe_strings(state["knows"] + ensure_string_list(signals.get("knows")))
+        state["suspects"] = dedupe_strings(state["suspects"] + ensure_string_list(signals.get("suspects")))
+        state["hides"] = dedupe_strings(state["hides"] + ensure_string_list(signals.get("hides")))
+        state["misreads"] = dedupe_strings(state["misreads"] + ensure_string_list(signals.get("misreads")))
+        if ensure_string(signals.get("self_story")):
+            state["self_story"] = ensure_string(signals["self_story"])
+        knowledge_state[name] = state
+    return knowledge_state
+
+
+def apply_focus_fallback_priors(
+    focus_state: dict[str, object],
+    reversal: str,
+    ambiguity: str,
+    aftermath: str,
+) -> dict[str, object]:
+    state = {
+        "knows": ensure_string_list(focus_state.get("knows")),
+        "suspects": ensure_string_list(focus_state.get("suspects")),
+        "hides": ensure_string_list(focus_state.get("hides")),
+        "misreads": ensure_string_list(focus_state.get("misreads")),
+        "self_story": ensure_string(focus_state.get("self_story")),
+    }
+    if reversal and not state["knows"]:
+        state["knows"] = dedupe_strings(state["knows"] + [reversal])
+    if ambiguity and not state["misreads"]:
+        state["misreads"] = dedupe_strings(state["misreads"] + [ambiguity])
+    if aftermath and not state["self_story"]:
+        state["self_story"] = aftermath
+    return state
+
+
+def merge_active_pressures(previous_pressures: list[str], prose_pressures: list[str], fallback_pressure: str) -> list[str]:
+    if prose_pressures:
+        return dedupe_strings(list(previous_pressures) + list(prose_pressures))
+    if fallback_pressure:
+        return dedupe_strings(list(previous_pressures) + [fallback_pressure])
+    return dedupe_strings(list(previous_pressures))
+
+
+def merge_minor_character_memory(
+    previous_minor_memory: dict[str, object],
+    prose_minor_memory: dict[str, object],
+    chapter_num: int,
+) -> dict[str, dict[str, object]]:
+    minor_character_memory = clone_minor_character_memory(previous_minor_memory, chapter_num)
+    for name, details in prose_minor_memory.items():
+        memory = minor_character_memory.get(name, {"last_seen": chapter_num, "remembers": []})
+        memory["last_seen"] = chapter_num
+        memory["remembers"] = dedupe_strings(memory["remembers"] + ensure_string_list(details.get("remembers")))
+        minor_character_memory[name] = memory
+    return minor_character_memory
 
 
 def dedupe_strings(values: list[str]) -> list[str]:

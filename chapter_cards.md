@@ -3,6 +3,7 @@
 <!-- Generated during PR2. One chapter card per chapter. -->
 
 ## Ch 01
+focus_character:
 goal:
 pressure:
 reversal:
@@ -14,4 +15,3 @@ scene_density:
 scene_type:
 scene_method:
 risk:
-

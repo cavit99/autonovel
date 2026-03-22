@@ -1,8 +1,11 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from stateful_drafting import (
     build_new_mode_prompt,
@@ -166,6 +169,29 @@ The narration revises itself when it gets too sure.
         self.assertIn("active_pressures", state)
         self.assertIn("Cass", state["knowledge_state"])
 
+    def test_build_story_state_uses_card_priors_when_prose_is_silent(self):
+        state = build_story_state(
+            2,
+            {
+                "focus_character": "Cass",
+                "goal": "Get proof",
+                "pressure": "Room is public",
+                "reversal": "The witness lies",
+                "aftermath": "Cass doubles down",
+                "irreversible_change": "Cass names a suspect aloud",
+                "allowed_ambiguity": "Whether the witness is afraid",
+            },
+            None,
+            "Cass stood at the window and listened.",
+            [],
+            {"Cass": {"cognitive_ceiling": {"abstraction_level": "medium"}}},
+        )
+        self.assertEqual(state["active_pressures"], ["Room is public"])
+        self.assertEqual(state["world_clock"]["offstage_consequences"], ["Cass names a suspect aloud"])
+        self.assertEqual(state["knowledge_state"]["Cass"]["knows"], ["The witness lies"])
+        self.assertEqual(state["knowledge_state"]["Cass"]["misreads"], ["Whether the witness is afraid"])
+        self.assertEqual(state["knowledge_state"]["Cass"]["self_story"], "Cass doubles down")
+
     def test_infer_focus_character_does_not_depend_on_engine_order(self):
         focus = infer_focus_character(
             {"goal": "Cass gets proof from the steward"},
@@ -243,6 +269,53 @@ The narration revises itself when it gets too sure.
         self.assertIn("Cass left with the lie fixed in public.", state["world_clock"]["offstage_consequences"])
         self.assertNotIn("Cass publicly accuses Orin", state["world_clock"]["offstage_consequences"])
 
+    def test_build_story_state_tracks_fronted_pronouns_and_filters_place_entities(self):
+        state = build_story_state(
+            4,
+            {
+                "focus_character": "Cass",
+                "goal": "Hold the ledger",
+                "pressure": "Courtroom clocks are closing the hour",
+                "reversal": "The porter denies everything",
+                "aftermath": "Cass is trapped in a larger lie",
+                "irreversible_change": "Cass binds himself to the false account",
+                "allowed_ambiguity": "Whether Mara is helping",
+            },
+            None,
+            (
+                "Cass discovered the seal had already been broken. "
+                "Under the noon bells, he realized the porter had switched the ledger. "
+                "Before the corridor emptied, he suspected Mara was delaying the search. "
+                "Doctor Vale waited by East Gate with Sir Niko. "
+                "He promised himself he could keep lying. "
+                "Cass left with the new lie fixed before the court."
+            ),
+            [
+                {
+                    "type": "pressure",
+                    "description": "Noon bells force an answer",
+                    "required": True,
+                }
+            ],
+            {
+                "Cass": {"cognitive_ceiling": {"abstraction_level": "medium"}},
+                "Mara": {"cognitive_ceiling": {"abstraction_level": "high"}},
+            },
+        )
+        cass_state = state["knowledge_state"]["Cass"]
+        self.assertIn("the seal had already been broken", cass_state["knows"])
+        self.assertIn("the porter had switched the ledger", cass_state["knows"])
+        self.assertIn("Mara was delaying the search", cass_state["suspects"])
+        self.assertEqual(cass_state["self_story"], "he could keep lying")
+        self.assertIn("Doctor Vale", state["minor_character_memory"])
+        self.assertIn("Sir Niko", state["minor_character_memory"])
+        self.assertNotIn("East Gate", state["minor_character_memory"])
+        self.assertTrue(any("noon bells" in pressure.lower() for pressure in state["active_pressures"]))
+        self.assertEqual(
+            state["world_clock"]["offstage_consequences"],
+            ["Cass left with the new lie fixed before the court."],
+        )
+
     def test_detect_new_mode_and_prompt_include_pr3_constraints(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -277,7 +350,7 @@ The narration revises itself when it gets too sure.
                 )
             )
             (base / "chapter_cards.md").write_text(
-                "# Chapter Cards\n\n## Ch 01: Signals\ngoal: Get proof\npressure: Public corridor\n"
+                "# Chapter Cards\n\n## Ch 01: Signals\nfocus_character: Cass\ngoal: Get proof\npressure: Public corridor\n"
                 "reversal: The witness hedges\naftermath: Cass leaves exposed\n"
                 "irreversible_change: Cass commits to the lie\nallowed_ambiguity: Whether the witness is afraid\n"
                 "time_span: One afternoon\nscene_density: high\nscene_type: confrontation\n"
