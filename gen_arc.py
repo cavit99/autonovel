@@ -71,7 +71,7 @@ def read_required(path: Path) -> str:
         raise FileNotFoundError(f"required file not found: {path}") from exc
 
 
-def build_prompt(seed: str, world: str, characters: str, perspective: str, mystery: str, voice: str) -> str:
+def build_prompt(seed: str, world: str, characters: str, perspective: str, voice: str) -> str:
     return f"""Create ARC_OUTLINE.JSON for this novel.
 
 SEED:
@@ -89,9 +89,6 @@ PERSPECTIVE:
 VOICE:
 {voice[:2500]}
 
-CENTRAL MYSTERY:
-{mystery[:2500]}
-
 Return valid JSON with:
 - title
 - acts: list of 3-4 objects with name and irreversible_turns
@@ -103,6 +100,7 @@ Rules:
 - keep the arc lean; this is not the full chapter outline
 - only capture irreversible turns, major reveals, pressure escalations, and candidate risk chapters
 - candidate_risk_chapters should be 0-3 chapter numbers
+- derive the central mystery/reveal structure from the seed and approved bootstrap materials above; do not rely on any external template
 - JSON only
 """
 
@@ -132,9 +130,8 @@ def generate_arc(*, output_path: Path = DEFAULT_OUTPUT, import_from_outline: boo
     world = read_required(readable_planning_artifact_path("world", BASE_DIR))
     characters = read_required(readable_planning_artifact_path("characters", BASE_DIR))
     perspective = read_required(readable_planning_artifact_path("perspective", BASE_DIR))
-    mystery = read_required(BASE_DIR / "MYSTERY.md")
     voice = read_required(readable_planning_artifact_path("voice", BASE_DIR))
-    raw = call_writer(build_prompt(seed, world, characters, perspective, mystery, voice))
+    raw = call_writer(build_prompt(seed, world, characters, perspective, voice))
     arc = normalize_arc_payload(extract_json_object(raw))
 
     ensure_parent_dir(output_path)

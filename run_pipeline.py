@@ -377,7 +377,7 @@ def require_success(result: subprocess.CompletedProcess, context: str) -> subpro
 
 def git_pathspec_has_matches(pathspec: str) -> bool:
     result = run_tool_args(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", pathspec],
+        ["git", "ls-files", "--cached", "--others", "--ignored", "--exclude-standard", "--", pathspec],
         timeout=30,
     )
     return result.returncode == 0 and bool(result.stdout.strip())
@@ -391,7 +391,7 @@ def git_add_commit(message: str) -> str:
     stage_pathspecs = pipeline_stage_pathspecs()
     if stage_pathspecs:
         require_success(
-            run_tool_args(["git", "add", "-A", "--", *stage_pathspecs], timeout=120),
+            run_tool_args(["git", "add", "-f", "-A", "--", *stage_pathspecs], timeout=120),
             "git add",
         )
     else:

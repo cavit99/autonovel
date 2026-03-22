@@ -662,8 +662,24 @@ class OrchestratorManifestTests(unittest.TestCase):
             commit_hash = run_pipeline.git_add_commit(message)
 
         self.assertEqual(commit_hash, "abc123")
-        self.assertEqual(commands[0], ["git", "add", "-A", "--", "manifest.json", ":(glob)chapters/ch_*.md"])
+        self.assertEqual(commands[0], ["git", "add", "-f", "-A", "--", "manifest.json", ":(glob)chapters/ch_*.md"])
         self.assertEqual(commands[1], ["git", "commit", "-m", message, "--allow-empty"])
+
+    def test_git_pathspec_has_matches_checks_ignored_artifacts_too(self):
+        captured = {}
+
+        def fake_run_tool_args(args, timeout=600, check=False):
+            captured["args"] = args
+            return subprocess.CompletedProcess(args, 0, stdout="planning/world.md\n", stderr="")
+
+        with patch.object(run_pipeline, "run_tool_args", side_effect=fake_run_tool_args):
+            matched = run_pipeline.git_pathspec_has_matches("planning/world.md")
+
+        self.assertTrue(matched)
+        self.assertEqual(
+            captured["args"],
+            ["git", "ls-files", "--cached", "--others", "--ignored", "--exclude-standard", "--", "planning/world.md"],
+        )
 
     def test_revision_target_chapters_keeps_full_eval_weakest_then_low_scores(self):
         with TemporaryDirectory() as tmpdir:
