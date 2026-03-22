@@ -4,7 +4,7 @@ run_pipeline.py — Orchestrate the autonovel pipeline from foundation to export
 
 Usage:
   python run_pipeline.py                    # run from current state
-  python run_pipeline.py --from-scratch     # start fresh from seed.md
+  python run_pipeline.py --from-scratch     # start fresh from planning/seed.md
   python run_pipeline.py --phase foundation # run only foundation
   python run_pipeline.py --phase drafting   # run only drafting
   python run_pipeline.py --phase revision   # run only revision
@@ -319,7 +319,7 @@ def clear_directory_contents(path: Path) -> list[Path]:
 
 
 def generated_planning_files() -> list[Path]:
-    # These are regenerated from seed.md during the foundation phase.
+    # These are regenerated from planning/seed.md during the foundation phase.
     return list(planning_artifact_paths(BASE_DIR).values())
 
 
@@ -1050,7 +1050,7 @@ def main() -> None:
         epilog="""\
 Examples:
   python run_pipeline.py                     # resume from current state
-  python run_pipeline.py --from-scratch      # start fresh from seed.md
+  python run_pipeline.py --from-scratch      # start fresh from planning/seed.md
   python run_pipeline.py --phase foundation  # run only foundation
   python run_pipeline.py --phase drafting    # run only drafting
   python run_pipeline.py --phase revision    # run only revision
@@ -1058,7 +1058,7 @@ Examples:
   python run_pipeline.py --phase export      # run only export
 """,
     )
-    parser.add_argument("--from-scratch", action="store_true", help="Reset state and start from seed.md")
+    parser.add_argument("--from-scratch", action="store_true", help="Reset state and start from planning/seed.md")
     parser.add_argument("--phase", choices=PHASE_ORDER, help="Run only a specific phase")
     parser.add_argument("--max-cycles", type=int, default=None, help=f"Maximum revision cycles (default: {MAX_REVISION_CYCLES})")
     args = parser.parse_args()

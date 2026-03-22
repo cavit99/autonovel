@@ -20,7 +20,7 @@ class OrchestratorManifestTests(unittest.TestCase):
             (root / "eval_logs").mkdir()
             (root / "edit_logs").mkdir()
             (root / "chapters" / "ch_01.md").write_text("# Ch 1\n\nOne two three.\n", encoding="utf-8")
-            (root / "seed.md").write_text("A seed\n", encoding="utf-8")
+            (planning / "seed.md").write_text("A seed\n", encoding="utf-8")
             (planning / "chapter_cards.md").write_text(
                 "# Chapter Cards\n\n"
                 "## Ch 01: Signals\n"
@@ -44,7 +44,7 @@ class OrchestratorManifestTests(unittest.TestCase):
         self.assertEqual(manifest["word_count"], 6)
         self.assertEqual(manifest["risk_chapters"], [1])
         self.assertEqual(manifest["phase"], "drafting")
-        self.assertEqual(manifest["files"]["seed"], "seed.md")
+        self.assertEqual(manifest["files"]["seed"], "planning/seed.md")
         self.assertEqual(manifest["files"]["chapter_cards"], "planning/chapter_cards.md")
         self.assertIn("seed", manifest["hashes"])
 

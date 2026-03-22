@@ -160,7 +160,7 @@ Export helper behavior:
 
 ### Foundation And Planning
 
-- `seed.md`
+- `planning/seed.md`
 - `planning/world.md`
 - `planning/characters.md`
 - `planning/character_engine.json`

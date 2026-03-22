@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from project_paths import migrate_planning_artifacts, require_seed_path
+from project_paths import migrate_planning_artifacts, require_seed_path, seed_path
 
 
 class ProjectPathsTests(unittest.TestCase):
@@ -38,6 +38,20 @@ class ProjectPathsTests(unittest.TestCase):
 
         self.assertIn("seed.md", str(ctx.exception))
         self.assertIn("seed.txt is no longer read automatically", str(ctx.exception))
+
+    def test_require_seed_path_prefers_planning_seed_md_and_falls_back_to_root_seed_md(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
+            (root / "seed.md").write_text("root seed\n", encoding="utf-8")
+
+            self.assertEqual(require_seed_path(root), root / "seed.md")
+
+            (planning / "seed.md").write_text("planning seed\n", encoding="utf-8")
+
+            self.assertEqual(require_seed_path(root), planning / "seed.md")
+            self.assertEqual(seed_path(root), planning / "seed.md")
 
 
 if __name__ == "__main__":

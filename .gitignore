@@ -18,5 +18,26 @@ coverage.xml
 venv/
 .claude/
 
+# Generated runtime artifacts
+/seed.md
+/planning/*
+!/planning/.gitkeep
+!/planning/seed.example.md
+/manifest.json
+/results.tsv
+/state.json
+/manuscript.md
+/arc_summary.md
+/reviews.md
+/typeset/novel.tex
+/typeset/novel.pdf
+/chapters/ch_*.md
+/chapters/variants/ch_*.md
+/briefs/ch*_*.md
+/scene_options/ch_*.json
+/state/story_state/ch_*.json
+/edit_logs/*.json
+/eval_logs/*.json
+
 # OS/editor clutter
 .DS_Store

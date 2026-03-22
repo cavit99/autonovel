@@ -159,7 +159,7 @@ class GenericSeedSupportTests(unittest.TestCase):
 
             planning = root / "planning"
             planning.mkdir()
-            (root / "seed.md").write_text("A new seed\n", encoding="utf-8")
+            (planning / "seed.md").write_text("A new seed\n", encoding="utf-8")
             (root / "seed.txt").write_text("Legacy seed\n", encoding="utf-8")
             (briefs_dir / "example.md").write_text("# Example\n", encoding="utf-8")
             (chapters_dir / ".gitkeep").write_text("", encoding="utf-8")
@@ -205,7 +205,7 @@ class GenericSeedSupportTests(unittest.TestCase):
             ):
                 removed = run_pipeline.clear_from_scratch_artifacts()
                 self.assertTrue(removed)
-                self.assertTrue((root / "seed.md").exists())
+                self.assertTrue((planning / "seed.md").exists())
                 self.assertTrue((root / "seed.txt").exists())
                 self.assertTrue((briefs_dir / "example.md").exists())
                 self.assertTrue((chapters_dir / ".gitkeep").exists())

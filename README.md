@@ -50,8 +50,10 @@ cp .env.example .env
 uv run python seed.py
 ```
 
-If `seed.py` is not part of your workflow, write `seed.md` directly. Existing
-`seed.txt` files are left alone and no longer read automatically.
+If `seed.py` is not part of your workflow, write `planning/seed.md` directly. Existing
+`seed.txt` files are left alone and no longer read automatically. A root-level
+`seed.md` still works as a compatibility fallback, but `planning/seed.md` is the
+intended location.
 
 To run the full automated pipeline from scratch:
 
@@ -235,7 +237,7 @@ uv run python review.py
 
 Current source-of-truth artifacts:
 
-- `seed.md`
+- `planning/seed.md`
 - `planning/world.md`
 - `planning/characters.md`
 - `planning/character_engine.json`

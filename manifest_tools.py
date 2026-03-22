@@ -14,10 +14,11 @@ from evidence_tools import compute_sha256, load_json
 from planning_split import parse_arc_outline, parse_chapter_cards
 from project_paths import (
     PLANNING_DIRNAME,
+    SEED_FILENAME,
     ensure_planning_dir,
     migrate_planning_artifacts,
+    readable_seed_path,
     readable_planning_artifact_path,
-    seed_path,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -29,7 +30,7 @@ MANIFEST_PATH = BASE_DIR / "manifest.json"
 MANIFEST_VERSION = 1
 
 FILE_KEYS = {
-    "seed": Path(seed_path().name),
+    "seed": Path(PLANNING_DIRNAME) / SEED_FILENAME,
     "world": Path(PLANNING_DIRNAME) / "world.md",
     "characters": Path(PLANNING_DIRNAME) / "characters.md",
     "character_engine": Path(PLANNING_DIRNAME) / "character_engine.json",
@@ -203,7 +204,7 @@ def files_index(base_dir: Path = BASE_DIR) -> dict[str, str]:
     ensure_planning_dir(base_dir)
     files: dict[str, str] = {}
     for key, rel in FILE_KEYS.items():
-        path = base_dir / rel
+        path = readable_seed_path(base_dir) if key == "seed" else base_dir / rel
         if path.exists():
             files[key] = relative_path(path, base_dir)
 
