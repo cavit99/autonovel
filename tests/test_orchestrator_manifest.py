@@ -180,6 +180,8 @@ class OrchestratorManifestTests(unittest.TestCase):
                 return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
 
             state = run_pipeline.default_state()
+            state["bootstrap_complete"] = True
+            state["bootstrap_approved"] = True
             with (
                 patch.object(run_pipeline, "BASE_DIR", root),
                 patch.object(run_pipeline, "MANIFEST_PATH", root / "manifest.json"),
@@ -196,10 +198,6 @@ class OrchestratorManifestTests(unittest.TestCase):
         self.assertEqual(
             commands,
             [
-                "gen_world.py",
-                "gen_characters.py --emit-engine",
-                "gen_perspective.py",
-                "discover_voice.py --trials 8",
                 "gen_arc.py",
                 "gen_chapter_cards.py",
             ],
@@ -255,6 +253,8 @@ class OrchestratorManifestTests(unittest.TestCase):
                 return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
 
             state = run_pipeline.default_state()
+            state["bootstrap_complete"] = True
+            state["bootstrap_approved"] = True
             with (
                 patch.object(run_pipeline, "BASE_DIR", root),
                 patch.object(run_pipeline, "MANIFEST_PATH", root / "manifest.json"),
@@ -271,10 +271,6 @@ class OrchestratorManifestTests(unittest.TestCase):
         self.assertEqual(
             commands,
             [
-                "gen_world.py",
-                "gen_characters.py --emit-engine",
-                "gen_perspective.py",
-                "discover_voice.py --trials 8",
                 "gen_arc.py",
                 "gen_chapter_cards.py",
                 "gen_thread_registry.py",
@@ -361,6 +357,8 @@ class OrchestratorManifestTests(unittest.TestCase):
                 return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
 
             state = run_pipeline.default_state()
+            state["bootstrap_complete"] = True
+            state["bootstrap_approved"] = True
             with (
                 patch.object(run_pipeline, "BASE_DIR", root),
                 patch.object(run_pipeline, "MANIFEST_PATH", root / "manifest.json"),
@@ -377,10 +375,6 @@ class OrchestratorManifestTests(unittest.TestCase):
         self.assertEqual(
             commands,
             [
-                "gen_world.py",
-                "gen_characters.py --emit-engine",
-                "gen_perspective.py",
-                "discover_voice.py --trials 8",
                 "gen_arc.py",
                 "gen_chapter_cards.py",
                 "gen_thread_registry.py",
@@ -480,6 +474,8 @@ class OrchestratorManifestTests(unittest.TestCase):
                 return subprocess.CompletedProcess(script, 0, stdout="ok\n", stderr="")
 
             state = run_pipeline.default_state()
+            state["bootstrap_complete"] = True
+            state["bootstrap_approved"] = True
             with (
                 patch.object(run_pipeline, "BASE_DIR", root),
                 patch.object(run_pipeline, "MANIFEST_PATH", root / "manifest.json"),
@@ -496,21 +492,21 @@ class OrchestratorManifestTests(unittest.TestCase):
 
         self.assertEqual(updated["phase"], "drafting")
         self.assertEqual(
-            commands[:8],
+            commands[:4],
             [
-                "gen_world.py",
-                "gen_characters.py --emit-engine",
-                "gen_perspective.py",
-                "discover_voice.py --trials 8",
                 "gen_arc.py",
                 "gen_chapter_cards.py",
                 "gen_thread_registry.py",
                 "gen_outline_part2.py",
             ],
         )
-        self.assertIn("gen_canon.py", commands)
         self.assertIn("voice_fingerprint.py", commands)
         self.assertIn("evaluate.py --phase foundation", commands)
+        self.assertNotIn("gen_world.py", commands)
+        self.assertNotIn("gen_characters.py --emit-engine", commands)
+        self.assertNotIn("gen_perspective.py", commands)
+        self.assertNotIn("discover_voice.py --trials 8", commands)
+        self.assertNotIn("gen_canon.py", commands)
 
     def test_drafting_smoke_runs_new_flow_for_one_chapter(self):
         with TemporaryDirectory() as tmpdir:

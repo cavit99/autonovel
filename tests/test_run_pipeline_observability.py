@@ -133,6 +133,8 @@ class RunPipelineObservabilityTests(unittest.TestCase):
 
             stdout = io.StringIO()
             state = run_pipeline.default_state()
+            state["bootstrap_complete"] = True
+            state["bootstrap_approved"] = True
             with (
                 patch.object(run_pipeline, "BASE_DIR", root),
                 patch.object(run_pipeline, "MANIFEST_PATH", root / "manifest.json"),

@@ -5,6 +5,8 @@ run_pipeline.py — Orchestrate the autonovel pipeline from foundation to export
 Usage:
   python run_pipeline.py                    # run from current state
   python run_pipeline.py --from-scratch     # start fresh from planning/seed.md
+  python run_pipeline.py --approve-bootstrap
+                                         # continue foundation after bootstrap review
   python run_pipeline.py --phase foundation # run only foundation
   python run_pipeline.py --phase drafting   # run only drafting
   python run_pipeline.py --phase revision   # run only revision
@@ -69,6 +71,21 @@ MAX_PATCH_REVISIONS_PER_CYCLE = 3
 PLATEAU_DELTA = 0.3
 
 PHASE_ORDER = ["foundation", "drafting", "revision", "review", "export"]
+BOOTSTRAP_ARTIFACT_NAMES = (
+    "world",
+    "characters",
+    "character_engine",
+    "perspective",
+    "voice",
+    "voice_discovery",
+    "canon",
+)
+FOUNDATION_STRUCTURAL_ARTIFACT_NAMES = (
+    "arc_outline",
+    "chapter_cards",
+    "thread_registry",
+    "outline",
+)
 PIPELINE_GIT_STAGE_PATHSPECS = (
     "planning/world.md",
     "planning/characters.md",
@@ -117,7 +134,9 @@ PIPELINE_GIT_STAGE_PATHSPECS = (
 def default_state() -> dict:
     return {
         "phase": "foundation",
-        "current_focus": "planning",
+        "current_focus": "bootstrap",
+        "bootstrap_complete": False,
+        "bootstrap_approved": False,
         "iteration": 0,
         "foundation_score": 0.0,
         "lore_score": 0.0,
@@ -130,10 +149,28 @@ def default_state() -> dict:
 
 
 def load_state() -> dict:
+    state = default_state()
     if STATE_FILE.exists():
         with open(STATE_FILE, encoding="utf-8") as handle:
-            return json.load(handle)
-    return default_state()
+            loaded = json.load(handle)
+        if isinstance(loaded, dict):
+            state.update(loaded)
+
+    if state.get("bootstrap_approved"):
+        state["bootstrap_complete"] = True
+
+    phase = str(state.get("phase", "foundation"))
+    if phase in {"drafting", "revision", "review", "export", "complete"}:
+        state["bootstrap_complete"] = True
+        state["bootstrap_approved"] = True
+    elif phase == "foundation":
+        if all(planning_artifact_path(name, BASE_DIR).exists() for name in FOUNDATION_STRUCTURAL_ARTIFACT_NAMES):
+            state["bootstrap_complete"] = True
+            state["bootstrap_approved"] = True
+        elif all(planning_artifact_path(name, BASE_DIR).exists() for name in BOOTSTRAP_ARTIFACT_NAMES):
+            state["bootstrap_complete"] = True
+
+    return state
 
 
 def save_state(state: dict) -> None:
@@ -419,6 +456,10 @@ def generated_planning_files() -> list[Path]:
     return list(planning_artifact_paths(BASE_DIR).values())
 
 
+def foundation_structural_generated_files() -> list[Path]:
+    return [planning_artifact_path(name, BASE_DIR) for name in FOUNDATION_STRUCTURAL_ARTIFACT_NAMES] + [MANIFEST_PATH]
+
+
 def legacy_generated_planning_files() -> list[Path]:
     return list(legacy_planning_artifact_paths(BASE_DIR).values())
 
@@ -589,6 +630,18 @@ def count_words_in_chapters() -> int:
 
 def count_chapter_files() -> int:
     return len(list(CHAPTERS_DIR.glob("ch_*.md")))
+
+
+def bootstrap_approval_pending(state: dict) -> bool:
+    return bool(state.get("bootstrap_complete")) and not bool(state.get("bootstrap_approved"))
+
+
+def bootstrap_review_message() -> str:
+    return (
+        "Bootstrap artifacts are ready for review in planning/world.md, planning/characters.md, "
+        "planning/perspective.md, planning/voice.md, and planning/canon.md. "
+        "Re-run with --approve-bootstrap to continue into structural planning."
+    )
 
 
 def get_total_chapters(state: dict) -> int:
@@ -819,38 +872,66 @@ def build_manuscript() -> Path:
 # PHASE 1 — FOUNDATION
 # ---------------------------------------------------------------------------
 
+def run_foundation_bootstrap(state: dict) -> dict:
+    if state.get("bootstrap_complete"):
+        return state
+
+    banner("FOUNDATION BOOTSTRAP", "-")
+
+    step("Generating world bible...")
+    require_success(
+        uv_run_to_file("gen_world.py", planning_artifact_path("world", BASE_DIR), timeout=300),
+        "gen_world.py",
+    )
+
+    step("Generating characters and character engine...")
+    require_success(
+        uv_run_to_file(
+            "gen_characters.py --emit-engine",
+            planning_artifact_path("characters", BASE_DIR),
+            timeout=300,
+        ),
+        "gen_characters.py --emit-engine",
+    )
+
+    step("Generating governing perspective...")
+    require_success(uv_run("gen_perspective.py", timeout=300), "gen_perspective.py")
+
+    step("Discovering voice...")
+    require_success(uv_run("discover_voice.py --trials 8", timeout=900), "discover_voice.py")
+
+    step("Generating canon...")
+    require_success(
+        uv_run_to_file("gen_canon.py", planning_artifact_path("canon", BASE_DIR), timeout=300),
+        "gen_canon.py",
+    )
+
+    state["bootstrap_complete"] = True
+    state["bootstrap_approved"] = False
+    state["current_focus"] = "awaiting_bootstrap_approval"
+    save_state(state)
+
+    banner("BOOTSTRAP COMPLETE — AWAITING APPROVAL")
+    print(f"  {bootstrap_review_message()}")
+    return state
+
+
 def run_foundation(state: dict) -> dict:
     banner("PHASE 1: FOUNDATION", "=")
 
+    state = run_foundation_bootstrap(state)
+    if bootstrap_approval_pending(state):
+        step(bootstrap_review_message())
+        return state
+
     best_score = state.get("foundation_score", 0.0)
     iteration = state.get("iteration", 0)
-    generated_paths = generated_planning_files() + [MANIFEST_PATH]
+    generated_paths = foundation_structural_generated_files()
+    state["current_focus"] = "structural_planning"
 
     for i in range(iteration + 1, MAX_FOUNDATION_ITERS + 1):
         banner(f"Foundation Iteration {i}", "-")
         state["iteration"] = i
-
-        step("Generating world bible...")
-        require_success(
-            uv_run_to_file("gen_world.py", planning_artifact_path("world", BASE_DIR), timeout=300),
-            "gen_world.py",
-        )
-
-        step("Generating characters and character engine...")
-        require_success(
-            uv_run_to_file(
-                "gen_characters.py --emit-engine",
-                planning_artifact_path("characters", BASE_DIR),
-                timeout=300,
-            ),
-            "gen_characters.py --emit-engine",
-        )
-
-        step("Generating governing perspective...")
-        require_success(uv_run("gen_perspective.py", timeout=300), "gen_perspective.py")
-
-        step("Discovering voice...")
-        require_success(uv_run("discover_voice.py --trials 8", timeout=900), "discover_voice.py")
 
         step("Generating arc outline...")
         require_success(uv_run("gen_arc.py", timeout=300), "gen_arc.py")
@@ -869,12 +950,6 @@ def run_foundation(state: dict) -> dict:
         require_success(uv_run("gen_outline_part2.py", timeout=300), "gen_outline_part2.py")
         validate_outline_matches_chapter_cards(cards)
         summarize_outline_artifact()
-
-        step("Generating canon...")
-        require_success(
-            uv_run_to_file("gen_canon.py", planning_artifact_path("canon", BASE_DIR), timeout=300),
-            "gen_canon.py",
-        )
 
         build_manifest_and_gate("foundation")
 
@@ -909,6 +984,7 @@ def run_foundation(state: dict) -> dict:
     state["chapters_total"] = total
     state["phase"] = "drafting"
     state["current_focus"] = "chapter_drafting"
+    state["bootstrap_approved"] = True
     save_state(state)
 
     banner(f"FOUNDATION COMPLETE — score {best_score}, {total} chapters planned")
@@ -1164,6 +1240,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
     else:
         state = load_state()
 
+    if args.from_scratch and args.approve_bootstrap:
+        raise SystemExit(
+            "--approve-bootstrap only applies after bootstrap has paused for review. "
+            "Run --from-scratch first, inspect the bootstrap artifacts, then rerun with --approve-bootstrap."
+        )
+
     ensure_planning_dir(BASE_DIR)
     CHAPTERS_DIR.mkdir(exist_ok=True)
     BRIEFS_DIR.mkdir(exist_ok=True)
@@ -1172,6 +1254,23 @@ def run_pipeline(args: argparse.Namespace) -> None:
     SCENE_OPTIONS_DIR.mkdir(exist_ok=True)
     STORY_STATE_DIR.mkdir(parents=True, exist_ok=True)
     VARIANTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.approve_bootstrap:
+        if not state.get("bootstrap_complete"):
+            raise SystemExit(
+                "Bootstrap artifacts are not ready yet. Run the pipeline once without --approve-bootstrap first."
+            )
+        if not state.get("bootstrap_approved"):
+            state["bootstrap_approved"] = True
+            state["current_focus"] = "structural_planning"
+            save_state(state)
+            step("Bootstrap approval recorded. Continuing into structural planning.")
+
+    if args.phase and args.phase != "foundation" and bootstrap_approval_pending(state):
+        raise SystemExit(
+            "Bootstrap review is still pending. Re-run with --phase foundation --approve-bootstrap "
+            "or simply --approve-bootstrap to continue."
+        )
 
     max_cycles = args.max_cycles if args.max_cycles else MAX_REVISION_CYCLES
 
@@ -1202,6 +1301,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
         try:
             if phase == "foundation":
                 state = run_foundation(state)
+                if bootstrap_approval_pending(state):
+                    break
             elif phase == "drafting":
                 state = run_drafting(state)
             elif phase == "revision":
@@ -1224,6 +1325,15 @@ def run_pipeline(args: argparse.Namespace) -> None:
     elapsed = datetime.now() - start_time
     hours = elapsed.total_seconds() / 3600
 
+    if bootstrap_approval_pending(state):
+        banner("PIPELINE PAUSED")
+        print(f"  Time:       {hours:.1f} hours")
+        print(f"  Phase:      {state.get('phase')}")
+        print(f"  Focus:      {state.get('current_focus')}")
+        print(f"  Bootstrap:  complete, awaiting approval")
+        print(f"  Next step:  uv run python run_pipeline.py --approve-bootstrap")
+        return
+
     banner("PIPELINE COMPLETE")
     print(f"  Time:       {hours:.1f} hours")
     print(f"  Phase:      {state.get('phase')}")
@@ -1243,6 +1353,7 @@ def main() -> None:
 Examples:
   python run_pipeline.py                     # resume from current state
   python run_pipeline.py --from-scratch      # start fresh from planning/seed.md
+  python run_pipeline.py --approve-bootstrap # continue after bootstrap review
   python run_pipeline.py --phase foundation  # run only foundation
   python run_pipeline.py --phase drafting    # run only drafting
   python run_pipeline.py --phase revision    # run only revision
@@ -1251,6 +1362,11 @@ Examples:
 """,
     )
     parser.add_argument("--from-scratch", action="store_true", help="Reset state and start from planning/seed.md")
+    parser.add_argument(
+        "--approve-bootstrap",
+        action="store_true",
+        help="Approve the generated bootstrap artifacts and continue into structural planning",
+    )
     parser.add_argument("--phase", choices=PHASE_ORDER, help="Run only a specific phase")
     parser.add_argument("--max-cycles", type=int, default=None, help=f"Maximum revision cycles (default: {MAX_REVISION_CYCLES})")
     args = parser.parse_args()

@@ -17,6 +17,7 @@ Current phase order:
 
 Current runtime features:
 
+- an explicit bootstrap review gate before structural planning starts
 - governing perspective via `gen_perspective.py`
 - voice discovery via `discover_voice.py`
 - structured character constraints via `planning/character_engine.json`
@@ -59,7 +60,13 @@ To run the full automated pipeline from scratch:
 
 ```bash
 uv run python run_pipeline.py --from-scratch
+uv run python run_pipeline.py --approve-bootstrap
 ```
+
+The first command now stops after bootstrap artifacts are generated. Inspect
+`planning/world.md`, `planning/characters.md`, `planning/perspective.md`,
+`planning/voice.md`, and `planning/canon.md`, then approve bootstrap with the
+second command to continue into structural planning.
 
 To resume from the current `state.json`:
 
@@ -71,6 +78,7 @@ Useful phase-limited runs:
 
 ```bash
 uv run python run_pipeline.py --phase foundation
+uv run python run_pipeline.py --phase foundation --approve-bootstrap
 uv run python run_pipeline.py --phase drafting
 uv run python run_pipeline.py --phase revision --max-cycles 4
 uv run python run_pipeline.py --phase review
@@ -81,22 +89,28 @@ uv run python run_pipeline.py --phase export
 
 ### 1. Foundation
 
-`run_pipeline.py` currently runs foundation in this order:
+`run_pipeline.py` now splits foundation into bootstrap and structural planning.
+
+Bootstrap run:
 
 1. `gen_world.py` -> `planning/world.md`
 2. `gen_characters.py --emit-engine` -> `planning/characters.md` plus
    `planning/character_engine.json`
 3. `gen_perspective.py`
 4. `discover_voice.py --trials 8`
-5. `gen_arc.py`
-6. `gen_chapter_cards.py`
-7. `gen_thread_registry.py`
-8. `gen_outline_part2.py` for legacy outline compatibility
-9. `gen_canon.py` -> `planning/canon.md`
-10. `build_manifest.py --phase foundation`
-11. `consistency_gate.py --phase foundation`
-12. `voice_fingerprint.py`
-13. `evaluate.py --phase foundation`
+5. `gen_canon.py` -> `planning/canon.md`
+6. stop and wait for explicit approval via `uv run python run_pipeline.py --approve-bootstrap`
+
+After approval, the structural loop runs in this order:
+
+1. `gen_arc.py`
+2. `gen_chapter_cards.py`
+3. `gen_thread_registry.py`
+4. `gen_outline_part2.py` for legacy outline compatibility
+5. `build_manifest.py --phase foundation`
+6. `consistency_gate.py --phase foundation`
+7. `voice_fingerprint.py`
+8. `evaluate.py --phase foundation`
 
 The manual path still needs shell redirection for `gen_world.py`,
 `gen_characters.py`, and `gen_canon.py`, but `run_pipeline.py` already captures
@@ -192,10 +206,15 @@ uv run python gen_world.py > planning/world.md
 uv run python gen_characters.py --emit-engine > planning/characters.md
 uv run python gen_perspective.py
 uv run python discover_voice.py --trials 8
+uv run python gen_canon.py > planning/canon.md
+```
+
+Approve bootstrap, then continue with structural planning:
+
+```bash
 uv run python gen_arc.py
 uv run python gen_chapter_cards.py
 uv run python gen_thread_registry.py
-uv run python gen_canon.py > planning/canon.md
 uv run python gen_outline_part2.py
 uv run python build_manifest.py --phase foundation
 uv run python consistency_gate.py --phase foundation

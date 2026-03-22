@@ -19,18 +19,27 @@ after review, not during revision.
 
 ### Phase 1: Foundation
 
-Current execution order in `run_pipeline.py`:
+Foundation now has two stages separated by an explicit human approval gate.
+
+Bootstrap stage:
 
 ```text
 gen_world.py                      -> planning/world.md
 gen_characters.py --emit-engine   -> planning/characters.md + planning/character_engine.json
 gen_perspective.py
 discover_voice.py --trials 8      -> planning/voice.md + planning/voice_discovery.json
+gen_canon.py                      -> planning/canon.md
+pause for human review
+```
+
+After approval via `uv run python run_pipeline.py --approve-bootstrap`, the
+structural planning stage runs:
+
+```text
 gen_arc.py                        -> planning/arc_outline.md
 gen_chapter_cards.py              -> planning/chapter_cards.md
 gen_thread_registry.py            -> planning/thread_registry.json
 gen_outline_part2.py              -> planning/outline.md (compatibility)
-gen_canon.py                      -> planning/canon.md
 build_manifest.py --phase foundation
 consistency_gate.py --phase foundation
 voice_fingerprint.py
@@ -42,6 +51,8 @@ Notes:
 - `gen_world.py`, `gen_characters.py`, and `gen_canon.py` still print markdown
   to stdout in direct manual use; the orchestrator captures that stdout into
   files
+- `state.json` now records bootstrap completion and approval so resumes do not
+  silently continue past the review gate
 - `discover_voice.py` is the foundation-time voice discovery mechanism
 - `voice_fingerprint.py` is prose telemetry, but it is still run during
   foundation in the current automated path
