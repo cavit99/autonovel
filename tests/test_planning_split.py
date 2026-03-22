@@ -1,6 +1,14 @@
 import json
+import io
 import re
+import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+from unittest import mock
+
+import gen_outline
+import gen_outline_part2
 
 from planning_split import (
     CHAPTER_CARD_FIELDS,
@@ -16,6 +24,62 @@ from planning_split import (
 
 
 class PlanningSplitTests(unittest.TestCase):
+    def run_wrapper(self, module, args: list[str]) -> tuple[int, str, str]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            exit_code = module.main(args)
+        return exit_code, stdout.getvalue(), stderr.getvalue()
+
+    def write_planning_artifacts(self, base_dir: Path) -> tuple[Path, Path, Path]:
+        arc_path = base_dir / "arc_outline.md"
+        arc_path.write_text(
+            """# Arc Outline
+
+**Working title:** Signals
+
+## Irreversible Turns
+### Act 1
+- Cass lies to get in
+
+## Major Reveals
+- The ledger is forged
+
+## Pressure Escalations
+- The guild begins checking records
+
+## Candidate Risk Chapters
+Ch 4, Ch 9
+"""
+        )
+        cards_path = base_dir / "chapter_cards.md"
+        cards_path.write_text(
+            """# Chapter Cards
+
+## Ch 01: Signals
+goal: Get proof
+pressure: The hallway is public
+reversal: The witness refuses
+aftermath: Cass doubles down
+irreversible_change: He commits to the lie
+allowed_ambiguity: Whether the witness is afraid or complicit
+time_span: One afternoon
+scene_density: high
+scene_type: confrontation
+scene_method: dialogue_driven
+risk: pov
+"""
+        )
+        threads_path = base_dir / "thread_registry.json"
+        threads = normalize_thread_registry(
+            [{"id": "proof", "description": "Need proof", "type": "plot", "first_seen": 1, "payoff": 5}]
+        )
+        threads_path.write_text(json.dumps(threads, indent=2) + "\n")
+        return arc_path, cards_path, threads_path
+
+    def snapshot_paths(self, *paths: Path) -> dict[Path, tuple[str, int]]:
+        return {path: (path.read_text(), path.stat().st_mtime_ns) for path in paths}
+
     def test_normalize_chapter_cards_fills_required_fields(self):
         cards = normalize_chapter_cards([{"number": 2, "title": "Signals", "goal": "Get answers"}])
         card = cards[0]
@@ -76,6 +140,7 @@ Ch 4, Ch 9
         text = """# Chapter Cards
 
 ## Ch 01: Signals
+focus_character: Cass
 goal: Get proof
 pressure: The hallway is public
 reversal: The witness refuses
@@ -90,10 +155,21 @@ risk: pov
 """
         cards = parse_chapter_cards(text)
         self.assertEqual(cards[0]["title"], "Signals")
+        self.assertEqual(cards[0]["focus_character"], "Cass")
         self.assertEqual(cards[0]["scene_density"], "high")
         self.assertEqual(cards[0]["scene_type"], "confrontation")
         self.assertEqual(cards[0]["scene_method"], "dialogue_driven")
         self.assertEqual(cards[0]["risk"], "pov")
+
+    def test_parse_chapter_cards_accepts_focus_alias(self):
+        text = """# Chapter Cards
+
+## Ch 01: Signals
+pov_character: Cass
+goal: Get proof
+"""
+        cards = parse_chapter_cards(text)
+        self.assertEqual(cards[0]["focus_character"], "Cass")
 
     def test_parse_chapter_cards_ignores_empty_template_card(self):
         rendered = render_chapter_cards([])
@@ -186,6 +262,209 @@ risk: pov
         threads = normalize_thread_registry([{"id": "echo", "description": "Coin", "type": "echo"}])
         blob = json.dumps(threads)
         self.assertEqual(json.loads(blob)[0]["type"], "echo")
+
+    def test_gen_outline_wrapper_default_mode_is_read_only(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            arc_path, cards_path, threads_path = self.write_planning_artifacts(base_dir)
+            output_path = base_dir / "outline.md"
+            before = self.snapshot_paths(arc_path, cards_path, threads_path)
+
+            with (
+                mock.patch.object(gen_outline, "generate_arc", side_effect=AssertionError("generate_arc called")),
+                mock.patch.object(
+                    gen_outline, "generate_chapter_cards", side_effect=AssertionError("generate_chapter_cards called")
+                ),
+                mock.patch.object(
+                    gen_outline, "generate_thread_registry", side_effect=AssertionError("generate_thread_registry called")
+                ),
+            ):
+                exit_code, _, _ = self.run_wrapper(
+                    gen_outline,
+                    [
+                        "--output",
+                        str(output_path),
+                        "--arc-output",
+                        str(arc_path),
+                        "--cards-output",
+                        str(cards_path),
+                        "--threads-output",
+                        str(threads_path),
+                    ],
+                )
+
+            self.assertEqual(exit_code, 0)
+            rendered = output_path.read_text()
+            self.assertIn("### Ch 1: Signals", rendered)
+            self.assertIn("| proof | Need proof |", rendered)
+            for path, (contents, mtime_ns) in before.items():
+                self.assertEqual(path.read_text(), contents)
+                self.assertEqual(path.stat().st_mtime_ns, mtime_ns)
+
+    def test_gen_outline_wrapper_requires_existing_artifacts_without_refresh(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            output_path = base_dir / "outline.md"
+            arc_path = base_dir / "arc_outline.md"
+            cards_path = base_dir / "chapter_cards.md"
+            threads_path = base_dir / "thread_registry.json"
+
+            exit_code, _, stderr = self.run_wrapper(
+                gen_outline,
+                [
+                    "--output",
+                    str(output_path),
+                    "--arc-output",
+                    str(arc_path),
+                    "--cards-output",
+                    str(cards_path),
+                    "--threads-output",
+                    str(threads_path),
+                ],
+            )
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("read-only by default", stderr)
+            self.assertIn("--refresh-new-planning", stderr)
+            self.assertIn(str(arc_path), stderr)
+            self.assertIn(str(cards_path), stderr)
+            self.assertIn(str(threads_path), stderr)
+
+    def test_gen_outline_wrapper_refresh_flag_regenerates_planning_artifacts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            arc_path, cards_path, threads_path = self.write_planning_artifacts(base_dir)
+            output_path = base_dir / "outline.md"
+
+            refreshed_arc = {
+                "title": "Refreshed Signals",
+                "acts": [{"name": "Act 1", "irreversible_turns": ["Cass burns the ledger bridge"]}],
+                "major_reveals": ["The ledger was bait"],
+                "pressure_escalations": ["The guild seals the archives"],
+                "candidate_risk_chapters": [3],
+            }
+            refreshed_cards = normalize_chapter_cards([{"number": 3, "title": "Aftershock", "goal": "Survive fallout"}])
+            refreshed_threads = normalize_thread_registry(
+                [{"id": "bait", "description": "Ledger bait", "type": "plot", "first_seen": 3, "payoff": 7}]
+            )
+
+            def fake_generate_arc(*, output_path: Path) -> dict[str, object]:
+                output_path.write_text("arc refreshed\n")
+                return refreshed_arc
+
+            def fake_generate_cards(*, output_path: Path) -> list[dict[str, object]]:
+                output_path.write_text("cards refreshed\n")
+                return refreshed_cards
+
+            def fake_generate_threads(*, output_path: Path) -> list[dict[str, object]]:
+                output_path.write_text(json.dumps(refreshed_threads, indent=2) + "\n")
+                return refreshed_threads
+
+            with (
+                mock.patch.object(gen_outline, "generate_arc", side_effect=fake_generate_arc) as arc_mock,
+                mock.patch.object(gen_outline, "generate_chapter_cards", side_effect=fake_generate_cards) as cards_mock,
+                mock.patch.object(
+                    gen_outline, "generate_thread_registry", side_effect=fake_generate_threads
+                ) as threads_mock,
+            ):
+                exit_code, _, _ = self.run_wrapper(
+                    gen_outline,
+                    [
+                        "--refresh-new-planning",
+                        "--output",
+                        str(output_path),
+                        "--arc-output",
+                        str(arc_path),
+                        "--cards-output",
+                        str(cards_path),
+                        "--threads-output",
+                        str(threads_path),
+                    ],
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(arc_mock.call_count, 1)
+            self.assertEqual(cards_mock.call_count, 1)
+            self.assertEqual(threads_mock.call_count, 1)
+            self.assertEqual(arc_path.read_text(), "arc refreshed\n")
+            self.assertEqual(cards_path.read_text(), "cards refreshed\n")
+            self.assertIn("Ledger bait", threads_path.read_text())
+            rendered = output_path.read_text()
+            self.assertIn("# Refreshed Signals", rendered)
+            self.assertIn("### Ch 3: Aftershock", rendered)
+            self.assertIn("| bait | Ledger bait |", rendered)
+
+    def test_gen_outline_part2_default_mode_is_read_only(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            arc_path, cards_path, threads_path = self.write_planning_artifacts(base_dir)
+            output_path = base_dir / "outline.md"
+            before = self.snapshot_paths(arc_path, cards_path, threads_path)
+
+            with mock.patch.object(
+                gen_outline_part2, "generate_thread_registry", side_effect=AssertionError("generate_thread_registry called")
+            ):
+                exit_code, _, _ = self.run_wrapper(
+                    gen_outline_part2,
+                    [
+                        "--output",
+                        str(output_path),
+                        "--arc-output",
+                        str(arc_path),
+                        "--cards-output",
+                        str(cards_path),
+                        "--threads-output",
+                        str(threads_path),
+                    ],
+                )
+
+            self.assertEqual(exit_code, 0)
+            rendered = output_path.read_text()
+            self.assertIn("### Ch 1: Signals", rendered)
+            self.assertIn("| proof | Need proof |", rendered)
+            for path, (contents, mtime_ns) in before.items():
+                self.assertEqual(path.read_text(), contents)
+                self.assertEqual(path.stat().st_mtime_ns, mtime_ns)
+
+    def test_gen_outline_part2_refresh_flag_regenerates_thread_registry(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_dir = Path(temp_dir)
+            arc_path, cards_path, threads_path = self.write_planning_artifacts(base_dir)
+            output_path = base_dir / "outline.md"
+            before = self.snapshot_paths(arc_path, cards_path)
+            refreshed_threads = normalize_thread_registry(
+                [{"id": "echo", "description": "Bell echo", "type": "echo", "first_seen": 2, "payoff": 6}]
+            )
+
+            def fake_generate_threads(*, output_path: Path) -> list[dict[str, object]]:
+                output_path.write_text(json.dumps(refreshed_threads, indent=2) + "\n")
+                return refreshed_threads
+
+            with mock.patch.object(
+                gen_outline_part2, "generate_thread_registry", side_effect=fake_generate_threads
+            ) as threads_mock:
+                exit_code, _, _ = self.run_wrapper(
+                    gen_outline_part2,
+                    [
+                        "--refresh-new-planning",
+                        "--output",
+                        str(output_path),
+                        "--arc-output",
+                        str(arc_path),
+                        "--cards-output",
+                        str(cards_path),
+                        "--threads-output",
+                        str(threads_path),
+                    ],
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(threads_mock.call_count, 1)
+            self.assertIn("Bell echo", threads_path.read_text())
+            for path, (contents, mtime_ns) in before.items():
+                self.assertEqual(path.read_text(), contents)
+                self.assertEqual(path.stat().st_mtime_ns, mtime_ns)
+            self.assertIn("| echo | Bell echo |", output_path.read_text())
 
 
 if __name__ == "__main__":

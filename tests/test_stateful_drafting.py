@@ -10,6 +10,7 @@ from stateful_drafting import (
     build_story_state,
     detect_new_planning_mode,
     generate_scene_options,
+    infer_focus_character,
     load_chapter_card,
     local_thread_window,
     normalize_scene_options,
@@ -164,6 +165,83 @@ The narration revises itself when it gets too sure.
         self.assertIn("minor_character_memory", state)
         self.assertIn("active_pressures", state)
         self.assertIn("Cass", state["knowledge_state"])
+
+    def test_infer_focus_character_does_not_depend_on_engine_order(self):
+        focus = infer_focus_character(
+            {"goal": "Cass gets proof from the steward"},
+            {"Bea": {"cognitive_ceiling": {}}, "Cass": {"cognitive_ceiling": {}}},
+        )
+        self.assertEqual(focus, "Cass")
+
+    def test_build_story_state_prefers_accepted_prose_over_card_priors(self):
+        state = build_story_state(
+            3,
+            {
+                "focus_character": "Cass",
+                "goal": "Get proof from the porter",
+                "pressure": "Public corridor full of witnesses",
+                "reversal": "The porter lies to Cass",
+                "aftermath": "Cass decides he is alone",
+                "irreversible_change": "Cass publicly accuses Orin",
+                "allowed_ambiguity": "Whether Mara is loyal",
+            },
+            {
+                "chapter": 2,
+                "active_pressures": ["Old debt"],
+                "minor_character_memory": {
+                    "Toma": {"last_seen": 2, "remembers": ["Cass snapped at him once."]},
+                },
+            },
+            (
+                "Cass realized the ledger had been copied before dawn. "
+                "He suspected Orin was moving the meeting to the bell tower. "
+                "Cass mistook Mara's caution for betrayal. "
+                "Cass told himself he could still control the room. "
+                "Under the eyes of the waiting clerks, he had to answer before the bell. "
+                "Lenne hovered by the door. "
+                "Peta blocked the stair. "
+                "Mara knew Cass had heard the bells. "
+                "Cass left with the lie fixed in public."
+            ),
+            [
+                {
+                    "type": "pressure",
+                    "description": "Waiting clerks are watching every answer",
+                    "required": True,
+                },
+                {
+                    "type": "pressure",
+                    "description": "The bell tower meeting is moving",
+                    "required": True,
+                },
+            ],
+            {
+                "Mara": {"cognitive_ceiling": {"abstraction_level": "high"}},
+                "Cass": {"cognitive_ceiling": {"abstraction_level": "medium"}},
+            },
+        )
+        cass_state = state["knowledge_state"]["Cass"]
+        self.assertIn("the ledger had been copied before dawn", cass_state["knows"])
+        self.assertIn("Orin was moving the meeting to the bell tower", cass_state["suspects"])
+        self.assertIn("Mara's caution for betrayal", cass_state["misreads"])
+        self.assertEqual(cass_state["self_story"], "he could still control the room")
+        self.assertNotIn("The porter lies to Cass", cass_state["knows"])
+        self.assertNotIn("Whether Mara is loyal", cass_state["misreads"])
+
+        self.assertIn("Cass had heard the bells", state["knowledge_state"]["Mara"]["knows"])
+
+        self.assertIn("Lenne", state["minor_character_memory"])
+        self.assertIn("Peta", state["minor_character_memory"])
+        self.assertNotIn("Mara", state["minor_character_memory"])
+        self.assertEqual(state["minor_character_memory"]["Lenne"]["last_seen"], 3)
+        self.assertIn("Toma", state["minor_character_memory"])
+
+        self.assertIn("Old debt", state["active_pressures"])
+        self.assertTrue(any("waiting clerks" in pressure.lower() for pressure in state["active_pressures"]))
+        self.assertTrue(any("bell tower meeting" in pressure.lower() for pressure in state["active_pressures"]))
+        self.assertNotIn("Public corridor full of witnesses", state["active_pressures"])
+        self.assertIn("Cass left with the lie fixed in public.", state["world_clock"]["offstage_consequences"])
+        self.assertNotIn("Cass publicly accuses Orin", state["world_clock"]["offstage_consequences"])
 
     def test_detect_new_mode_and_prompt_include_pr3_constraints(self):
         with tempfile.TemporaryDirectory() as tmp:

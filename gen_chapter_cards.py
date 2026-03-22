@@ -84,6 +84,7 @@ ARC OUTLINE:
 Return valid JSON with a top-level "chapters" array. Each chapter card must include:
 - number
 - title
+- focus_character
 - goal
 - pressure
 - reversal
@@ -99,6 +100,7 @@ Return valid JSON with a top-level "chapters" array. Each chapter card must incl
 Rules:
 - target 22-26 cards if the source materials support it
 - use concise values, not essays
+- focus_character should name the locked POV character when the chapter has one
 - scene_density must be one of: high, medium, low
 - scene_type must be one of: investigation, confrontation, revelation, quiet, crisis, preparation, aftermath, digression
 - scene_method must be one of: close_interiority, observed_action, dialogue_driven, environmental, epistolary, panoramic, fragmented

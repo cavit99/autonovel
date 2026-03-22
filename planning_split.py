@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 CHAPTER_CARD_FIELDS = (
+    "focus_character",
     "goal",
     "pressure",
     "reversal",
@@ -20,6 +21,10 @@ CHAPTER_CARD_FIELDS = (
     "scene_method",
     "risk",
 )
+CHAPTER_CARD_FIELD_ALIASES = {
+    "focus": "focus_character",
+    "pov_character": "focus_character",
+}
 
 THREAD_TYPES = ("plot", "pressure", "echo", "texture")
 SCENE_DENSITIES = {"high", "medium", "low"}
@@ -180,6 +185,9 @@ def normalize_chapter_cards(payload: object) -> list[dict[str, object]]:
     for index, raw_card in enumerate(raw_cards, start=1):
         card = raw_card if isinstance(raw_card, dict) else {}
         number = ensure_int(card.get("number") or card.get("chapter"), default=index)
+        focus_character = ensure_string(
+            card.get("focus_character") or card.get("pov_character") or card.get("focus")
+        )
         scene_density = ensure_string(card.get("scene_density")).lower() or DEFAULT_SCENE_DENSITY
         if scene_density not in SCENE_DENSITIES:
             scene_density = DEFAULT_SCENE_DENSITY
@@ -196,6 +204,7 @@ def normalize_chapter_cards(payload: object) -> list[dict[str, object]]:
             {
                 "number": number,
                 "title": ensure_string(card.get("title")) or f"Chapter {number}",
+                "focus_character": focus_character,
                 "goal": ensure_string(card.get("goal")),
                 "pressure": ensure_string(card.get("pressure")),
                 "reversal": ensure_string(card.get("reversal")),
@@ -484,7 +493,7 @@ def parse_chapter_cards(text: str) -> list[dict[str, object]]:
         if ":" not in stripped:
             continue
         key, value = stripped.split(":", 1)
-        normalized_key = ensure_string(key)
+        normalized_key = CHAPTER_CARD_FIELD_ALIASES.get(ensure_string(key), ensure_string(key))
         if normalized_key in CHAPTER_CARD_FIELDS:
             current[normalized_key] = ensure_string(value)
 
@@ -498,6 +507,7 @@ def is_placeholder_card(card: dict[str, object]) -> bool:
     if ensure_string(card.get("title")) != f"Chapter {number}":
         return False
     text_fields = (
+        "focus_character",
         "goal",
         "pressure",
         "reversal",
@@ -565,6 +575,9 @@ def derive_chapter_cards_from_outline(text: str) -> list[dict[str, object]]:
             {
                 "number": number,
                 "title": title,
+                "focus_character": first_markdown_value(block, "Focus character")
+                or first_markdown_value(block, "POV")
+                or first_markdown_value(block, "Focus"),
                 "goal": first_markdown_value(block, "Goal") or first_beat(block),
                 "pressure": first_markdown_value(block, "Pressure"),
                 "reversal": first_markdown_value(block, "Reversal"),
