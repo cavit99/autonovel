@@ -66,19 +66,28 @@ evidence-backed revision, and a separate review phase.
 
 ## Foundation Rules
 
-When building manually, the current sequence is:
+When building manually, foundation now has a bootstrap stage and a separate
+structural planning stage.
+
+Bootstrap:
 
 1. `gen_world.py > planning/world.md`
 2. `gen_characters.py --emit-engine > planning/characters.md`
 3. `gen_perspective.py`
 4. `discover_voice.py --trials 8`
-5. `gen_arc.py`
-6. `gen_chapter_cards.py`
-7. `gen_thread_registry.py`
-8. `gen_outline_part2.py`
-9. `gen_canon.py > planning/canon.md`
-10. `build_manifest.py --phase foundation`
-11. `consistency_gate.py --phase foundation`
+5. `gen_canon.py > planning/canon.md`
+6. stop for human review and approval
+
+After approval:
+
+1. `gen_arc.py`
+2. `gen_chapter_cards.py`
+3. `gen_thread_registry.py`
+4. `gen_outline_part2.py`
+5. `build_manifest.py --phase foundation`
+6. `consistency_gate.py --phase foundation`
+7. `voice_fingerprint.py`
+8. `evaluate.py --phase foundation`
 
 Important:
 
@@ -106,7 +115,7 @@ For chapter `N`:
 
 - uses the new planning path when governing perspective, character engine,
   planning split, scene options, and prior story state exist
-- otherwise falls back to the legacy outline prompt
+- otherwise raises instead of silently falling back to the legacy outline path
 
 `draft_chapter.py --mode new` requires:
 

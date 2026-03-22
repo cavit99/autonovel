@@ -42,6 +42,7 @@ Start from scratch:
 
 ```bash
 uv run python run_pipeline.py --from-scratch
+uv run python run_pipeline.py --approve-bootstrap
 ```
 
 Resume from the current `state.json`:
@@ -54,6 +55,7 @@ Useful phase-limited runs:
 
 ```bash
 uv run python run_pipeline.py --phase foundation
+uv run python run_pipeline.py --phase foundation --approve-bootstrap
 uv run python run_pipeline.py --phase drafting
 uv run python run_pipeline.py --phase revision --max-cycles 4
 uv run python run_pipeline.py --phase review
@@ -70,9 +72,10 @@ Current orchestrator order:
 
 What each phase does:
 
-- `foundation`: world, characters, perspective, voice discovery, arc,
-  chapter cards, thread registry, legacy outline refresh, canon, voice
-  telemetry, manifest, gate, foundation eval
+- `foundation`: bootstrap generation for world, characters, perspective, voice,
+  and canon; then pause for explicit human approval; after approval, iterative
+  structural planning for arc, chapter cards, thread registry, legacy outline
+  refresh, manifest, gate, voice telemetry, and foundation eval
 - `drafting`: `advance_state.py`, `plan_scene.py --variants 4`,
   `draft_chapter.py --mode auto`, chapter eval, optional variants for risk or
   weak chapters, manifest, gate
@@ -98,6 +101,8 @@ orchestrator.
 
 ### Foundation
 
+Bootstrap first:
+
 ```bash
 uv run python seed.py
 
@@ -105,18 +110,37 @@ uv run python gen_world.py > planning/world.md
 uv run python gen_characters.py --emit-engine > planning/characters.md
 uv run python gen_perspective.py
 uv run python discover_voice.py --trials 8
+uv run python gen_canon.py > planning/canon.md
+```
+
+Review these before proceeding:
+
+- `planning/world.md`
+- `planning/characters.md`
+- `planning/perspective.md`
+- `planning/voice.md`
+- `planning/canon.md`
+
+Then continue with structural planning:
+
+```bash
 uv run python gen_arc.py
 uv run python gen_chapter_cards.py
 uv run python gen_thread_registry.py
-uv run python gen_canon.py > planning/canon.md
 uv run python gen_outline_part2.py
 uv run python build_manifest.py --phase foundation
 uv run python consistency_gate.py --phase foundation
+uv run python voice_fingerprint.py
 uv run python evaluate.py --phase foundation
 ```
 
 Source-of-truth planning files at the end of foundation:
 
+- `planning/world.md`
+- `planning/characters.md`
+- `planning/perspective.md`
+- `planning/voice.md`
+- `planning/canon.md`
 - `planning/arc_outline.md`
 - `planning/chapter_cards.md`
 - `planning/thread_registry.json`
@@ -183,7 +207,7 @@ How `auto` works:
   `planning/thread_registry.json`, `planning/world.md`,
   `planning/canon.md`, and the needed `scene_options` and prior
   `story_state` files exist
-- otherwise it falls back to the legacy outline prompt
+- otherwise it raises instead of silently falling back to legacy drafting
 
 How `plan_scene.py` works:
 
