@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from manifest_tools import build_manifest_payload, collect_consistency_issues
+from planning_split import render_chapter_cards, render_legacy_outline
 from variant_tools import pick_best_variant_deterministically
 import run_pipeline
 
@@ -88,6 +89,45 @@ class OrchestratorManifestTests(unittest.TestCase):
             issues = collect_consistency_issues(root, manifest, phase="revision")
 
         self.assertTrue(any("evidence pack manuscript hash" in issue for issue in issues))
+
+    def test_foundation_placeholder_cards_do_not_create_fake_outline_mismatch(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
+            (root / "chapters").mkdir()
+            (root / "eval_logs").mkdir()
+            (root / "edit_logs").mkdir()
+
+            (planning / "seed.md").write_text("A seed\n", encoding="utf-8")
+            (planning / "world.md").write_text("# World\n", encoding="utf-8")
+            (planning / "characters.md").write_text("# Characters\n", encoding="utf-8")
+            (planning / "character_engine.json").write_text("{}\n", encoding="utf-8")
+            (planning / "perspective.md").write_text("# Perspective\n", encoding="utf-8")
+            (planning / "voice.md").write_text("# Voice\n", encoding="utf-8")
+            (planning / "canon.md").write_text("# Canon\n", encoding="utf-8")
+            (planning / "arc_outline.md").write_text(
+                "# Arc Outline\n\n**Working title:** Signals\n",
+                encoding="utf-8",
+            )
+            (planning / "chapter_cards.md").write_text(render_chapter_cards([]) + "\n", encoding="utf-8")
+            (planning / "thread_registry.json").write_text("[]\n", encoding="utf-8")
+            (planning / "outline.md").write_text(
+                render_legacy_outline(
+                    "Signals",
+                    {"title": "Signals", "acts": [], "major_reveals": [], "pressure_escalations": []},
+                    [],
+                    [],
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            manifest = build_manifest_payload(root, phase="foundation")
+            issues = collect_consistency_issues(root, manifest, phase="foundation")
+
+        self.assertEqual(manifest["planned_chapter_count"], 0)
+        self.assertEqual(issues, [])
 
     def test_deterministic_variant_selection_prefers_cleaner_variant(self):
         candidates = [

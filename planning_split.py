@@ -53,8 +53,6 @@ DEFAULT_SCENE_TYPE = "investigation"
 DEFAULT_SCENE_METHOD = "close_interiority"
 DEFAULT_RISK = "none"
 DEFAULT_ARC_TITLE = "Arc Outline"
-DEFAULT_LEGACY_CHAPTER_COUNT = 24
-
 _CHAPTER_BLOCK_RE = re.compile(
     r"^###\s*Ch(?:apter)?\s*(\d+)\s*:?\s*([^\n]*?)\s*$\n?"
     r"(.*?)(?=^###\s*Ch(?:apter)?\s*\d+\s*:?\s*[^\n]*\s*$|^##\s*Act\b|^##\s*Foreshadowing|\Z)",
@@ -369,23 +367,9 @@ def render_legacy_outline(title: str, arc: dict[str, object], cards: list[dict[s
             lines.append(f"- **Risk:** {card['risk']}")
             lines.append("")
     else:
-        current_act = None
-        for chapter_number in range(1, DEFAULT_LEGACY_CHAPTER_COUNT + 1):
-            act_name = act_name_for_chapter(chapter_number, acts)
-            if act_name != current_act:
-                current_act = act_name
-                lines.append(f"## {act_name}")
-                lines.append("")
-            lines.append(f"### Ch {chapter_number}: Chapter {chapter_number}")
-            lines.append("- BEATS:")
-            lines.append(f"  1. Placeholder beat for Chapter {chapter_number}.")
-            lines.append("- PLANTS: (foreshadowing seeded here)")
-            lines.append("  - description (payoff: Ch M)")
-            lines.append("- HARVESTS: (foreshadowing paid off here)")
-            lines.append("  - description (planted: Ch N)")
-            lines.append("- EMOTIONAL ARC: start -> end")
-            lines.append("- STATUS: unwritten")
-            lines.append("")
+        lines.append("## Chapters")
+        lines.append("<!-- Chapter cards have not been generated yet. -->")
+        lines.append("")
 
     lines.append("## Foreshadowing Ledger")
     if threads:

@@ -343,17 +343,16 @@ goal: Get proof
         cards = derive_chapter_cards_from_outline(legacy)
         self.assertEqual(cards[0]["goal"], "Cass arrives.")
 
-    def test_empty_legacy_render_includes_real_chapter_blocks(self):
+    def test_empty_legacy_render_does_not_invent_placeholder_chapter_blocks(self):
         rendered = render_legacy_outline(
             "Outline",
             {"title": "Outline", "acts": [], "major_reveals": [], "pressure_escalations": []},
             [],
             [],
         )
-        match = re.search(r"### Ch 1:.*?(?=### Ch 2:|## Foreshadowing|$)", rendered, re.DOTALL)
-        self.assertIsNotNone(match)
-        self.assertIn("- BEATS:", match.group(0))
-        self.assertIn("1. Placeholder beat for Chapter 1.", match.group(0))
+        self.assertIn("## Chapters", rendered)
+        self.assertIn("<!-- Chapter cards have not been generated yet. -->", rendered)
+        self.assertNotIn("### Ch 1:", rendered)
 
     def test_thread_registry_json_round_trip_shape(self):
         threads = normalize_thread_registry([{"id": "echo", "description": "Coin", "type": "echo"}])
