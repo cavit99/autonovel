@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """
 One-shot characters.md generator for foundation phase.
-Reads seed.txt + voice.md + world.md + CRAFT.md, calls writer model.
+Reads seed.txt + voice.md + world.md, calls the writer model, and prints
+the generated markdown. Optionally emits a structured character engine.
 """
+
+from __future__ import annotations
+
+import argparse
+import json
 import os
 import sys
 from pathlib import Path
+
 from dotenv import load_dotenv
+
+from foundation_mind import (
+    extract_json_object,
+    normalize_character_engine,
+)
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -14,9 +26,26 @@ load_dotenv(BASE_DIR / ".env")
 WRITER_MODEL = os.environ.get("AUTONOVEL_WRITER_MODEL", "claude-sonnet-4-6")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
+DEFAULT_ENGINE_PATH = BASE_DIR / "character_engine.json"
 
-def call_writer(prompt, max_tokens=16000):
+CHARACTER_SYSTEM = (
+    "You are a character designer for literary fiction with deep knowledge of "
+    "wound/want/need/lie frameworks, Sanderson's three sliders, and dialogue "
+    "distinctiveness. You create characters who feel like real people with "
+    "contradictions, secrets, and speech patterns you can hear. "
+    "You never use AI slop words. You write in clean, direct prose."
+)
+
+ENGINE_SYSTEM = (
+    "You are a fiction development editor converting a character registry into a "
+    "strict JSON character engine. Preserve the novel's specifics. Infer only when "
+    "the registry strongly supports it. Return valid JSON only."
+)
+
+
+def call_writer(prompt: str, *, max_tokens: int = 16000, temperature: float = 0.7, system: str = CHARACTER_SYSTEM) -> str:
     import httpx
+
     headers = {
         "x-api-key": API_KEY,
         "anthropic-version": "2023-06-01",
@@ -25,30 +54,33 @@ def call_writer(prompt, max_tokens=16000):
     payload = {
         "model": WRITER_MODEL,
         "max_tokens": max_tokens,
-        "temperature": 0.7,
-        "system": (
-            "You are a character designer for literary fiction with deep knowledge of "
-            "wound/want/need/lie frameworks, Sanderson's three sliders, and dialogue "
-            "distinctiveness. You create characters who feel like real people with "
-            "contradictions, secrets, and speech patterns you can hear. "
-            "You never use AI slop words. You write in clean, direct prose."
-        ),
+        "temperature": temperature,
+        "system": system,
         "messages": [{"role": "user", "content": prompt}],
     }
     resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
     resp.raise_for_status()
     return resp.json()["content"][0]["text"]
 
-seed = (BASE_DIR / "seed.txt").read_text()
-world = (BASE_DIR / "world.md").read_text()
 
-# Voice Part 2 only
-voice = (BASE_DIR / "voice.md").read_text()
-voice_lines = voice.split('\n')
-part2_start = next(i for i, l in enumerate(voice_lines) if 'Part 2' in l)
-voice_part2 = '\n'.join(voice_lines[part2_start:])
+def extract_voice_part2(voice_text: str) -> str:
+    voice_lines = voice_text.splitlines()
+    try:
+        part2_start = next(i for i, line in enumerate(voice_lines) if "Part 2" in line)
+    except StopIteration as exc:
+        raise SystemExit("ERROR: voice.md is missing the Part 2 heading") from exc
+    return "\n".join(voice_lines[part2_start:])
 
-prompt = f"""Build a complete character registry for this fantasy novel. This is CHARACTERS.MD --
+
+def read_required(path: Path) -> str:
+    try:
+        return path.read_text()
+    except FileNotFoundError as exc:
+        raise SystemExit(f"ERROR: required file not found: {path}") from exc
+
+
+def build_character_prompt(seed: str, world: str, voice_part2: str) -> str:
+    return f"""Build a complete character registry for this fantasy novel. This is CHARACTERS.MD --
 the definitive reference for WHO exists in this story, what drives them, how they speak,
 and what secrets they carry.
 
@@ -99,7 +131,7 @@ BUILD THE REGISTRY WITH AT LEAST THESE CHARACTERS:
    - His relationship to the sealed journals, the shaking hands
    - What he knows and what he's hiding
 
-3. **Perin Bellwright** (brother) 
+3. **Perin Bellwright** (brother)
    - Even though he's absent for much of the story, he needs full depth
    - What actually happened with the Corda contract
    - His presence through absence
@@ -143,6 +175,86 @@ IMPORTANT:
 - Target ~3000-4000 words. Dense character work, not padding.
 """
 
-print("Calling writer model...", file=sys.stderr)
-result = call_writer(prompt)
-print(result)
+
+def build_engine_prompt(seed: str, world: str, characters_markdown: str) -> str:
+    return f"""Convert the following character registry into CHARACTER_ENGINE.JSON.
+
+SEED CONCEPT:
+{seed}
+
+WORLD BIBLE:
+{world}
+
+CHARACTER REGISTRY:
+{characters_markdown}
+
+Return a JSON object keyed by major character name. For each character include:
+- wound
+- want
+- need
+- lie
+- unresolvable_contradictions (list of 1-3)
+- speech_sample (list of 5-10 lines)
+- metaphor_domain (list of 1-4 domains)
+- taboo_topics (list)
+- default_dodge
+- stress_transform (object with concise keys like syntax/dialogue/perception)
+- cognitive_ceiling (object with abstraction_level, reasoning_style, failure_mode)
+
+Rules:
+- abstraction_level must be one of: low, medium, high
+- preserve story-specific detail
+- prefer concrete, short values over essays
+- if a field is unclear, make the least-creative inference supported by the registry
+- valid JSON only, no markdown fences
+"""
+
+
+def write_engine(engine_text: str, output_path: Path) -> Path:
+    raw = extract_json_object(engine_text)
+    normalized = normalize_character_engine(raw)
+    output_path.write_text(json.dumps(normalized, indent=2) + "\n")
+    return output_path
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Generate the character registry for the novel")
+    parser.add_argument("--emit-engine", action="store_true", help="Also emit character_engine.json")
+    parser.add_argument(
+        "--engine-output",
+        type=Path,
+        default=DEFAULT_ENGINE_PATH,
+        help="Path for the emitted character engine JSON",
+    )
+    args = parser.parse_args()
+
+    if not API_KEY:
+        print("ERROR: ANTHROPIC_API_KEY not set in .env", file=sys.stderr)
+        sys.exit(1)
+
+    seed = read_required(BASE_DIR / "seed.txt")
+    world = read_required(BASE_DIR / "world.md")
+    voice = read_required(BASE_DIR / "voice.md")
+    voice_part2 = extract_voice_part2(voice)
+
+    prompt = build_character_prompt(seed, world, voice_part2)
+    print("Calling writer model...", file=sys.stderr)
+    characters_markdown = call_writer(prompt)
+
+    if args.emit_engine:
+        print(f"Emitting character engine to {args.engine_output}...", file=sys.stderr)
+        engine_prompt = build_engine_prompt(seed, world, characters_markdown)
+        engine_text = call_writer(
+            engine_prompt,
+            max_tokens=12000,
+            temperature=0.3,
+            system=ENGINE_SYSTEM,
+        )
+        out_path = write_engine(engine_text, args.engine_output)
+        print(f"Saved engine to {out_path}", file=sys.stderr)
+
+    print(characters_markdown)
+
+
+if __name__ == "__main__":
+    main()

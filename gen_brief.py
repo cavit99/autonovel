@@ -119,6 +119,87 @@ def load_cuts(ch: int) -> dict | None:
     return load_json(p)
 
 
+PATCH_TYPE_PRIORITY = {
+    "REDUNDANT": 0,
+    "OVER-EXPLAIN": 1,
+    "FAT": 2,
+    "TELL": 3,
+    "GENERIC": 4,
+    "STRUCTURAL": 5,
+    "OTHER": 6,
+}
+
+
+def _normalize_patch_literal(text: str) -> str:
+    return " ".join(text.split()).replace('"', "'").strip()
+
+
+def build_patch_directives_from_cuts(
+    cuts_data: dict | None,
+    *,
+    limit: int | None = None,
+    allowed_types: set[str] | None = None,
+) -> list[str]:
+    if not cuts_data:
+        return []
+
+    directives: list[str] = []
+    seen: set[str] = set()
+
+    cuts = cuts_data.get("cuts", [])
+    ranked_cuts = sorted(
+        cuts,
+        key=lambda cut: (
+            PATCH_TYPE_PRIORITY.get(str(cut.get("type", "OTHER")).upper(), 99),
+            len(str(cut.get("quote", ""))),
+        ),
+    )
+
+    for cut in ranked_cuts:
+        cut_type = str(cut.get("type", "OTHER")).upper()
+        if allowed_types and cut_type not in allowed_types:
+            continue
+
+        quote = _normalize_patch_literal(str(cut.get("quote", "")))
+        if not quote:
+            continue
+
+        action = str(cut.get("action", "CUT")).upper()
+        rewrite = _normalize_patch_literal(str(cut.get("rewrite", "")))
+
+        directive = ""
+        if action == "REWRITE" and rewrite:
+            directive = f'- replace: "{quote}" => "{rewrite}"'
+        elif action == "CUT":
+            directive = f'- cut: "{quote}"'
+        else:
+            continue
+
+        if directive in seen:
+            continue
+        seen.add(directive)
+        directives.append(directive)
+
+        if limit is not None and len(directives) >= limit:
+            break
+
+    return directives
+
+
+def append_patch_directives_section(brief_text: str, directives: list[str]) -> str:
+    if not directives:
+        return brief_text
+
+    body = brief_text.rstrip() + "\n\n"
+    body += "## Patch Directives\n"
+    body += "\n".join(directives) + "\n"
+    return body
+
+
+def has_patch_directives(brief_text: str) -> bool:
+    return "## Patch Directives" in brief_text
+
+
 # ---------------------------------------------------------------------------
 # panel feedback extraction
 # ---------------------------------------------------------------------------
@@ -226,6 +307,11 @@ def build_panel_brief(ch: int) -> str:
             keep_parts.append(m)
     # Check cuts file for tightest_passage
     cuts_data = load_cuts(ch)
+    patch_directives = build_patch_directives_from_cuts(
+        cuts_data,
+        limit=6,
+        allowed_types={"REDUNDANT", "OVER-EXPLAIN", "FAT", "TELL", "GENERIC"},
+    )
     if cuts_data and cuts_data.get("tightest_passage"):
         keep_parts.append(
             f'Tightest passage (from adversarial edit): "{cuts_data["tightest_passage"]}"'
@@ -339,7 +425,7 @@ def build_panel_brief(ch: int) -> str:
     brief += "## TARGET\n"
     brief += target_note + "\n"
 
-    return brief
+    return append_patch_directives_section(brief, patch_directives)
 
 
 def build_eval_brief(ch: int) -> str:
@@ -354,11 +440,13 @@ def build_eval_brief(ch: int) -> str:
     title = chapter_title(text)
     wc = word_count(text)
     voice_rules = extract_voice_rules()
+    patch_directives: list[str] = []
 
     problem_parts: list[str] = []
     keep_parts: list[str] = []
     change_parts: list[str] = []
     change_num = 1
+    patch_directives: list[str] = []
 
     # Per-chapter eval data
     if ch_eval_path:
@@ -451,6 +539,11 @@ def build_eval_brief(ch: int) -> str:
         keep_parts.append(
             f'Tightest passage (adversarial edit): "{cuts_data["tightest_passage"]}"'
         )
+    patch_directives = build_patch_directives_from_cuts(
+        cuts_data,
+        limit=6,
+        allowed_types={"REDUNDANT", "OVER-EXPLAIN", "FAT", "TELL", "GENERIC"},
+    )
 
     if not keep_parts:
         keep_parts.append("(Review chapter for strongest passages before revising.)")
@@ -485,7 +578,7 @@ def build_eval_brief(ch: int) -> str:
     brief += "## TARGET\n"
     brief += target_note + "\n"
 
-    return brief
+    return append_patch_directives_section(brief, patch_directives)
 
 
 def build_cuts_brief(ch: int) -> str:
@@ -504,6 +597,7 @@ def build_cuts_brief(ch: int) -> str:
     loosest = cuts_data.get("loosest_passage", "")
     fat_pct = cuts_data.get("overall_fat_percentage", 0)
     verdict = cuts_data.get("one_sentence_verdict", "")
+    patch_directives = build_patch_directives_from_cuts(cuts_data, limit=12)
 
     # Categorize cuts by type
     cut_types: dict[str, list[dict]] = {}
@@ -600,7 +694,7 @@ def build_cuts_brief(ch: int) -> str:
     brief += "## TARGET\n"
     brief += target_note + "\n"
 
-    return brief
+    return append_patch_directives_section(brief, patch_directives)
 
 
 def build_auto_brief() -> tuple[int, str]:
@@ -728,6 +822,11 @@ def build_auto_brief() -> tuple[int, str]:
         fat_pct = cuts_data.get("overall_fat_percentage", 0)
         tightest = cuts_data.get("tightest_passage", "")
         verdict = cuts_data.get("one_sentence_verdict", "")
+        patch_directives = build_patch_directives_from_cuts(
+            cuts_data,
+            limit=6,
+            allowed_types={"REDUNDANT", "OVER-EXPLAIN", "FAT", "TELL", "GENERIC"},
+        )
 
         if total_cuttable:
             problem_parts.append(
@@ -781,7 +880,7 @@ def build_auto_brief() -> tuple[int, str]:
     brief += "## TARGET\n"
     brief += target_note + "\n"
 
-    return ch, brief
+    return ch, append_patch_directives_section(brief, patch_directives)
 
 
 # ---------------------------------------------------------------------------
@@ -800,6 +899,11 @@ def main():
                         help="Generate brief from adversarial cuts for chapter CH")
     parser.add_argument("--auto", action="store_true",
                         help="Auto-detect weakest chapter and generate combined brief")
+    parser.add_argument(
+        "--require-patch-directives",
+        action="store_true",
+        help="Fail if the generated brief does not contain an actionable patch-directives section.",
+    )
     parser.add_argument("--dry-run", action="store_true",
                         help="Print brief to stdout without saving")
 
@@ -834,6 +938,12 @@ def main():
     else:  # --auto
         ch, brief_text = build_auto_brief()
         suffix = "auto"
+
+    if args.require_patch_directives and not has_patch_directives(brief_text):
+        sys.exit(
+            "ERROR: generated brief is not patch-friendly; no actionable patch directives "
+            "were available from the current evidence."
+        )
 
     if args.dry_run:
         print(brief_text)

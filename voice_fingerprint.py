@@ -149,6 +149,24 @@ def main():
     
     # Compute novel-wide averages
     all_vals = list(results.values())
+    out_path = BASE_DIR / "edit_logs" / "voice_fingerprint.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not all_vals:
+        payload = {
+            "chapters": {},
+            "outliers": {},
+            "novel_average": {},
+            "note": "No chapter files were available yet; voice fingerprint is empty QA telemetry.",
+        }
+        with open(out_path, "w") as f:
+            json.dump(payload, f, indent=2)
+        print("VOICE FINGERPRINT")
+        print("=" * 70)
+        print("No chapter files found yet; wrote empty telemetry report.")
+        print(f"\nSaved to {out_path}")
+        return
+
     avg = {}
     for key in all_vals[0]:
         vals = [r[key] for r in all_vals]
@@ -192,7 +210,6 @@ def main():
             print(f"    {o}")
     
     # Save full results
-    out_path = BASE_DIR / "edit_logs" / "voice_fingerprint.json"
     with open(out_path, "w") as f:
         json.dump({"chapters": results, "outliers": outliers}, f, indent=2)
     print(f"\nSaved to {out_path}")

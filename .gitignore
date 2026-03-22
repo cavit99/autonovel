@@ -1,10 +1,21 @@
-eval_logs/
-edit_logs/
-briefs/
+# Local planning notes
+pipeline_improvements_*.md
+
+# Python bytecode and caches
 __pycache__/
-*.pyc
+*.py[cod]
+
+# Test and tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+
+# Local environments
 .env
 .venv/
-typeset/*.pdf
-typeset/chapters_content.tex
-*.pdf
+venv/
+
+# OS/editor clutter
+.DS_Store
