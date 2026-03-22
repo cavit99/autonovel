@@ -290,8 +290,15 @@ goal: Get proof
         )
         stderr = io.StringIO()
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_path = Path(tmpdir) / "thread_registry.json"
+            base_dir = Path(tmpdir)
+            planning = base_dir / "planning"
+            planning.mkdir()
+            (planning / "arc_outline.md").write_text("# Arc Outline\n", encoding="utf-8")
+            (planning / "chapter_cards.md").write_text("# Chapter Cards\n", encoding="utf-8")
+            (planning / "outline.md").write_text("# Outline\n", encoding="utf-8")
+            output_path = planning / "thread_registry.json"
             with (
+                mock.patch.object(gen_thread_registry, "BASE_DIR", base_dir),
                 mock.patch.object(gen_thread_registry, "API_KEY", "test-key"),
                 mock.patch.object(gen_thread_registry, "call_writer", side_effect=RuntimeError("writer failed")),
                 mock.patch.object(gen_thread_registry, "derive_threads", return_value=fallback_threads),

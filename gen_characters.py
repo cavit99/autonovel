@@ -78,7 +78,7 @@ def extract_voice_part2(voice_text: str) -> str:
     try:
         part2_start = next(i for i, line in enumerate(voice_lines) if "Part 2" in line)
     except StopIteration as exc:
-        raise SystemExit("ERROR: voice.md is missing the Part 2 heading") from exc
+        raise ValueError("voice.md is missing the Part 2 heading") from exc
     return "\n".join(voice_lines[part2_start:])
 
 
@@ -87,6 +87,27 @@ def read_required(path: Path) -> str:
         return path.read_text()
     except FileNotFoundError as exc:
         raise SystemExit(f"ERROR: required file not found: {path}") from exc
+
+
+BOOTSTRAP_VOICE_GUIDANCE = (
+    "Voice identity has not been discovered yet. Build the cast from the seed's implied "
+    "social world, power relations, wounds, habits, and speech patterns. Favor concrete "
+    "human pressure over generic archetypes."
+)
+
+
+def load_voice_guidance(base_dir: Path) -> str:
+    voice_path = readable_planning_artifact_path("voice", base_dir)
+    if not voice_path.exists():
+        return BOOTSTRAP_VOICE_GUIDANCE
+    try:
+        voice_text = voice_path.read_text(encoding="utf-8")
+    except OSError:
+        return BOOTSTRAP_VOICE_GUIDANCE
+    try:
+        return extract_voice_part2(voice_text)
+    except ValueError:
+        return BOOTSTRAP_VOICE_GUIDANCE
 
 
 def build_character_prompt(seed: str, world: str, voice_part2: str) -> str:
@@ -246,8 +267,9 @@ def main() -> None:
 
     seed = require_seed_path(BASE_DIR).read_text(encoding="utf-8")
     world = read_required(readable_planning_artifact_path("world", BASE_DIR))
-    voice = read_required(readable_planning_artifact_path("voice", BASE_DIR))
-    voice_part2 = extract_voice_part2(voice)
+    voice_part2 = load_voice_guidance(BASE_DIR)
+    if voice_part2 == BOOTSTRAP_VOICE_GUIDANCE:
+        print("Voice identity not discovered yet; bootstrapping character generation from seed and world.", file=sys.stderr)
 
     prompt = build_character_prompt(seed, world, voice_part2)
     print("Calling writer model...", file=sys.stderr)

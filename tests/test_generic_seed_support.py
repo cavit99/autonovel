@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import gen_characters
+import gen_world
 import gen_revision
 import run_pipeline
 import voice_fingerprint
@@ -19,6 +20,32 @@ class GenericSeedSupportTests(unittest.TestCase):
         self.assertIn("Preserve any names, titles, factions, and relationships", prompt)
         self.assertNotIn("Cass Bellwright", prompt)
         self.assertNotIn("The Second Son of the House of Bells", prompt)
+
+    def test_world_prompt_uses_generic_world_scaffolding(self):
+        prompt = gen_world.build_world_prompt("A seed", "Voice guidance")
+
+        self.assertIn("story's primary location(s)", prompt)
+        self.assertIn("Edge Cases / Gifts / Curses / Unstable Phenomena", prompt)
+        self.assertNotIn("Cantamura", prompt)
+        self.assertNotIn("Cass's Gift", prompt)
+
+    def test_world_and_character_generators_bootstrap_without_voice_file(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
+            self.assertEqual(gen_world.load_voice_guidance(root), gen_world.BOOTSTRAP_VOICE_GUIDANCE)
+            self.assertEqual(gen_characters.load_voice_guidance(root), gen_characters.BOOTSTRAP_VOICE_GUIDANCE)
+
+    def test_world_and_character_generators_bootstrap_without_valid_voice_part2(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            planning = root / "planning"
+            planning.mkdir()
+            (planning / "voice.md").write_text("# Voice\n\nNo part two here.\n", encoding="utf-8")
+
+            self.assertEqual(gen_world.load_voice_guidance(root), gen_world.BOOTSTRAP_VOICE_GUIDANCE)
+            self.assertEqual(gen_characters.load_voice_guidance(root), gen_characters.BOOTSTRAP_VOICE_GUIDANCE)
 
     def test_revision_prompt_uses_derived_title_when_available(self):
         context = {
