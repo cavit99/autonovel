@@ -18,6 +18,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
     def load_dotenv(*_args, **_kwargs):
         return False
 
+from anthropic_api import message_text_from_response, text_block
 from evidence_tools import BASE_DIR, EDIT_LOG_DIR, load_json, render_evidence_pack
 
 load_dotenv(BASE_DIR / ".env")
@@ -26,6 +27,10 @@ SMELL_MODEL = os.environ.get("AUTONOVEL_SMELL_MODEL", os.environ.get("AUTONOVEL_
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
 ANTHROPIC_BETA = "context-1m-2025-08-07"
+PANEL_SYSTEM_PROMPT = (
+    "You are part of a prose-evaluation panel. "
+    "Follow the reading lens in the final user content block. Return valid JSON only."
+)
 
 PANELISTS = {
     "novelist": (
@@ -90,6 +95,23 @@ def parse_json_blob(raw: str) -> dict:
     return json.loads(raw, strict=False)
 
 
+def build_panel_message_content(prompt: str, lens: str) -> list[dict[str, object]]:
+    return [
+        text_block(prompt, cache=True),
+        text_block(f"READING LENS:\n{lens}"),
+    ]
+
+
+def build_panel_payload(system: str, prompt: str) -> dict[str, object]:
+    return {
+        "model": SMELL_MODEL,
+        "max_tokens": 2500,
+        "temperature": 0.5,
+        "system": PANEL_SYSTEM_PROMPT,
+        "messages": [{"role": "user", "content": build_panel_message_content(prompt, system)}],
+    }
+
+
 def call_panel(system: str, prompt: str) -> dict:
     import httpx
 
@@ -99,16 +121,9 @@ def call_panel(system: str, prompt: str) -> dict:
         "anthropic-beta": ANTHROPIC_BETA,
         "content-type": "application/json",
     }
-    payload = {
-        "model": SMELL_MODEL,
-        "max_tokens": 2500,
-        "temperature": 0.5,
-        "system": system,
-        "messages": [{"role": "user", "content": prompt}],
-    }
+    payload = build_panel_payload(system, prompt)
     response = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    response.raise_for_status()
-    raw = response.json()["content"][0]["text"].strip()
+    raw = message_text_from_response(response, context="humanity_panel request").strip()
     return parse_json_blob(raw)
 
 

@@ -1,7 +1,15 @@
 import unittest
 from unittest import mock
 
-from humanity_panel import ANTHROPIC_BETA, PANELISTS, call_panel, parse_json_blob, run_panelists
+from humanity_panel import (
+    ANTHROPIC_BETA,
+    PANELISTS,
+    PANEL_SYSTEM_PROMPT,
+    build_panel_payload,
+    call_panel,
+    parse_json_blob,
+    run_panelists,
+)
 
 
 class HumanityPanelTests(unittest.TestCase):
@@ -68,6 +76,21 @@ class HumanityPanelTests(unittest.TestCase):
         self.assertEqual(parsed, {"notes": ["ok"]})
         self.assertEqual(captured["headers"]["anthropic-beta"], ANTHROPIC_BETA)
         self.assertEqual(captured["headers"]["anthropic-version"], "2023-06-01")
+        self.assertEqual(captured["json"]["system"], PANEL_SYSTEM_PROMPT)
+        self.assertEqual(
+            captured["json"]["messages"][0]["content"][0]["cache_control"],
+            {"type": "ephemeral", "ttl": "5m"},
+        )
+        self.assertNotIn("cache_control", captured["json"]["messages"][0]["content"][1])
+
+    def test_build_panel_payload_caches_shared_prompt_only(self):
+        payload = build_panel_payload("novelist lens", "shared prompt")
+
+        self.assertEqual(payload["system"], PANEL_SYSTEM_PROMPT)
+        content = payload["messages"][0]["content"]
+        self.assertEqual(len(content), 2)
+        self.assertEqual(content[0]["cache_control"], {"type": "ephemeral", "ttl": "5m"})
+        self.assertNotIn("cache_control", content[1])
 
 
 if __name__ == "__main__":

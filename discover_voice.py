@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
     def load_dotenv(*_args, **_kwargs):
         return False
 
-from anthropic_api import message_text_from_response
+from anthropic_api import enable_automatic_prompt_cache, message_text_from_response, text_block
 from foundation_mind import (
     available_registers,
     extract_json_object,
@@ -55,7 +55,39 @@ JUDGE_SYSTEM = (
 )
 
 
-def call_model(*, prompt: str, system: str, model: str, temperature: float, max_tokens: int) -> str:
+def build_model_payload(
+    *,
+    system: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    prompt: str | None = None,
+    message_content: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    if prompt is None and message_content is None:
+        raise ValueError("call_model requires either prompt text or structured message content")
+    content = message_content if message_content is not None else prompt
+    payload = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "system": system,
+        "messages": [{"role": "user", "content": content}],
+    }
+    if prompt is not None and message_content is None:
+        enable_automatic_prompt_cache(payload)
+    return payload
+
+
+def call_model(
+    *,
+    system: str,
+    model: str,
+    temperature: float,
+    max_tokens: int,
+    prompt: str | None = None,
+    message_content: list[dict[str, object]] | None = None,
+) -> str:
     import httpx
 
     headers = {
@@ -63,13 +95,14 @@ def call_model(*, prompt: str, system: str, model: str, temperature: float, max_
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
     }
-    payload = {
-        "model": model,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "system": system,
-        "messages": [{"role": "user", "content": prompt}],
-    }
+    payload = build_model_payload(
+        system=system,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        prompt=prompt,
+        message_content=message_content,
+    )
     resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
     return message_text_from_response(resp, context=f"discover_voice model request ({model})")
 
@@ -114,6 +147,48 @@ Requirements:
 """
 
 
+def build_trial_message_content(
+    register: dict[str, str],
+    seed: str,
+    world: str,
+    characters: str,
+    perspective: str,
+) -> list[dict[str, object]]:
+    shared_context = f"""Write a trial passage for this novel.
+
+SEED CONCEPT:
+{seed}
+
+WORLD BIBLE (excerpt):
+{world[:3500]}
+
+CHARACTER REGISTRY (excerpt):
+{characters[:3500]}
+
+PERSPECTIVE:
+{perspective}
+
+Write 3-4 paragraphs, around 300-500 words, from the same kind of scene every time:
+- a charged encounter where the protagonist tries to get information,
+- the scene should reveal character pressure and the world's texture,
+- it should not be the climax,
+- it should not summarize the novel.
+
+Requirements:
+- keep the story facts consistent across registers
+- change HOW the prose perceives and sounds, not WHAT the scene is about
+- third-person limited past tense unless the perspective strongly implies otherwise
+- no markdown fences
+"""
+    register_block = f"""REGISTER TO TRY:
+- Name: {register["label"]}
+- Description: {register["description"]}
+
+Let this register govern HOW the shared scene is perceived and sounded.
+"""
+    return [text_block(shared_context, cache=True), text_block(register_block)]
+
+
 def build_score_prompt(register: dict[str, str], perspective: str, passage: str) -> str:
     return f"""Evaluate this trial passage for the novel's voice-discovery phase.
 
@@ -136,6 +211,31 @@ Return JSON only:
   "one_line_verdict": "..."
 }}
 """
+
+
+def build_score_message_content(register: dict[str, str], perspective: str, passage: str) -> list[dict[str, object]]:
+    shared_context = f"""Evaluate this trial passage for the novel's voice-discovery phase.
+
+PERSPECTIVE:
+{perspective}
+
+Return JSON only:
+{{
+  "quality": 0-10,
+  "distinctiveness": 0-10,
+  "perspective_fit": 0-10,
+  "strengths": ["2-4 short bullets"],
+  "risks": ["2-4 short bullets"],
+  "one_line_verdict": "..."
+}}
+"""
+    passage_block = f"""REGISTER:
+- {register["label"]}: {register["description"]}
+
+PASSAGE:
+{passage}
+"""
+    return [text_block(shared_context, cache=True), text_block(passage_block)]
 
 
 def build_compare_prompt(first: dict, second: dict, perspective: str) -> str:
@@ -219,19 +319,19 @@ def main() -> None:
     for register in registers:
         print(f"Generating trial passage: {register['label']}...", file=sys.stderr)
         passage = call_model(
-            prompt=build_trial_prompt(register, seed, world, characters, perspective),
             system=WRITER_SYSTEM,
             model=WRITER_MODEL,
             temperature=0.9,
             max_tokens=1600,
+            message_content=build_trial_message_content(register, seed, world, characters, perspective),
         ).strip()
         score = extract_json_object(
             call_model(
-                prompt=build_score_prompt(register, perspective, passage),
                 system=JUDGE_SYSTEM,
                 model=JUDGE_MODEL,
                 temperature=0.2,
                 max_tokens=1200,
+                message_content=build_score_message_content(register, perspective, passage),
             )
         )
         trial = {

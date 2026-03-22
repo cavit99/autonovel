@@ -15,6 +15,32 @@ from foundation_mind import VOICE_PART2_HEADING, render_voice_identity
 
 
 class DiscoverVoiceTests(unittest.TestCase):
+    def test_build_trial_message_content_caches_shared_story_context(self):
+        blocks = discover_voice.build_trial_message_content(
+            {"label": "Register 1", "description": "First option."},
+            "Seed idea",
+            "World text",
+            "Characters text",
+            "Perspective text",
+        )
+
+        self.assertEqual(len(blocks), 2)
+        self.assertEqual(blocks[0]["cache_control"], {"type": "ephemeral", "ttl": "5m"})
+        self.assertNotIn("cache_control", blocks[1])
+        self.assertIn("REGISTER TO TRY", blocks[1]["text"])
+
+    def test_build_score_message_content_caches_rubric_prefix(self):
+        blocks = discover_voice.build_score_message_content(
+            {"label": "Register 1", "description": "First option."},
+            "Perspective text",
+            "Trial passage",
+        )
+
+        self.assertEqual(len(blocks), 2)
+        self.assertEqual(blocks[0]["cache_control"], {"type": "ephemeral", "ttl": "5m"})
+        self.assertNotIn("cache_control", blocks[1])
+        self.assertIn("PASSAGE:", blocks[1]["text"])
+
     def _write_required_inputs(self, root: Path) -> None:
         planning = root / "planning"
         planning.mkdir()

@@ -14,6 +14,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from anthropic_api import enable_automatic_prompt_cache, message_text_from_response
 from variant_tools import (
     BASE_DIR,
     comparison_log_path,
@@ -87,9 +88,10 @@ def call_judge(prompt: str) -> dict[str, Any]:
         ),
         "messages": [{"role": "user", "content": prompt}],
     }
+    enable_automatic_prompt_cache(payload)
     response = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    response.raise_for_status()
-    return parse_json_blob(response.json()["content"][0]["text"])
+    raw = message_text_from_response(response, context="compare_variants judge request")
+    return parse_json_blob(raw)
 
 
 def apply_winner(chapter_num: int, winner_path: Path, base_dir: Path) -> Path:

@@ -33,7 +33,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
         return False
 load_dotenv(BASE_DIR / ".env")
 
-from anthropic_api import message_text_from_response
+from anthropic_api import enable_automatic_prompt_cache, message_text_from_response, text_block
 from evidence_tools import load_json, render_evidence_pack
 from project_paths import readable_planning_artifact_path
 
@@ -54,6 +54,11 @@ FULL_EVIDENCE_MAX_TOKENS = 12000
 SUMMARY_MODE_FULL_WARNING = (
     "WARNING: --full without --evidence uses degraded summary-mode judging. "
     "Prefer --full --evidence <eval_logs/evidence_pack.json> for normalized full-novel evaluation."
+)
+JUDGE_SYSTEM_PROMPT = (
+    "You are a literary critic and novel editor. "
+    "You evaluate fiction with precision. Always respond with valid JSON. "
+    "No markdown fences, no preamble -- just the JSON object."
 )
 
 
@@ -317,7 +322,27 @@ def extract_chapter_reference(chapter_num: int, layers: dict[str, str]) -> str:
     return "(chapter plan reference not found)"
 
 
-def call_judge(prompt, max_tokens=2000):
+def build_judge_payload(
+    *,
+    max_tokens: int = 2000,
+    prompt: str | None = None,
+    messages: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    if prompt is None and messages is None:
+        raise ValueError("call_judge requires either prompt text or structured messages")
+    payload = {
+        "model": JUDGE_MODEL,
+        "max_tokens": max_tokens,
+        "temperature": 0.3,
+        "system": JUDGE_SYSTEM_PROMPT,
+        "messages": messages if messages is not None else [{"role": "user", "content": prompt}],
+    }
+    if prompt is not None and messages is None:
+        enable_automatic_prompt_cache(payload)
+    return payload
+
+
+def call_judge(prompt=None, max_tokens=2000, *, messages: list[dict[str, object]] | None = None):
     """Call the Anthropic judge LLM and return its response text."""
     import httpx
 
@@ -327,17 +352,7 @@ def call_judge(prompt, max_tokens=2000):
         "anthropic-beta": ANTHROPIC_BETA,
         "content-type": "application/json",
     }
-    payload = {
-        "model": JUDGE_MODEL,
-        "max_tokens": max_tokens,
-        "temperature": 0.3,
-        "system": "You are a literary critic and novel editor. "
-                  "You evaluate fiction with precision. Always respond with valid JSON. "
-                  "No markdown fences, no preamble -- just the JSON object.",
-        "messages": [
-            {"role": "user", "content": prompt},
-        ],
-    }
+    payload = build_judge_payload(max_tokens=max_tokens, prompt=prompt, messages=messages)
 
     resp = httpx.post(
         f"{API_BASE_URL}/v1/messages",
@@ -823,6 +838,130 @@ Return JSON:
 """
 
 
+def build_chapter_judge_message_content(
+    *,
+    perspective: str,
+    voice: str,
+    characters: str,
+    character_engine: str,
+    world: str,
+    canon: str,
+    thread_registry: str,
+    chapter_reference: str,
+    prev_chapter_tail: str,
+    chapter_text: str,
+    include_risk: bool,
+) -> list[dict[str, object]]:
+    shared_context = f"""Evaluate this fantasy novel chapter against the planning docs and governing perspective.
+
+GOVERNING PERSPECTIVE:
+{perspective}
+
+VOICE DEFINITION:
+{voice}
+
+CHARACTER REGISTRY:
+{characters}
+
+CHARACTER ENGINE:
+{character_engine}
+
+WORLD BIBLE:
+{world}
+
+CANON:
+{canon}
+
+THREAD REGISTRY WINDOW:
+{thread_registry}
+
+Score the chapter on these dimensions. For every scored dimension, give:
+- score
+- weakest_moment
+- fix
+- note
+
+Primary chapter dimensions:
+- baseline_voice
+- perspective_distinctiveness
+- character_truthfulness
+- dialogue_separability
+- formal_enactment
+- surplus_life
+- scene_method_freshness
+- humor_signature
+- prose_quality
+- continuity
+- canon_compliance
+- lore_integration
+- engagement
+
+Compatibility dimensions for existing tools:
+- voice_adherence
+- beat_coverage
+- character_voice
+- plants_seeded
+
+Definitions:
+- baseline_voice: does the chapter still sound like the established book?
+- perspective_distinctiveness: does the chapter feel perceived by a specific mind with blind spots?
+- character_truthfulness: do people behave from contradiction, pressure, concealment, and cognitive ceiling?
+- dialogue_separability: can speakers be distinguished and do they sound socially alive rather than theme-perfect?
+- formal_enactment: does prose shape change when content changes? obsession scenes, unbearable scenes, bureaucracy, bodily stress should not all read the same
+- surplus_life: are there details serving the world and scene rather than only the argument?
+- scene_method_freshness: does the scene arrive through a vivid method rather than obedient beat execution?
+- humor_signature: does any humor feel native to the governing consciousness?
+- beat_coverage: how well does the chapter honor its current plan reference without becoming mechanical?
+- plants_seeded: are threads and plants integrated naturally rather than telegraphed?
+
+AI-pattern checks:
+- generic abstract dialogue
+- repeated sentence openings
+- metaphor domains that do not belong to the viewpoint or speaker
+- theme-perfect lines
+- explanation after the scene already showed the point
+
+Return JSON:
+{{
+  "baseline_voice": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "perspective_distinctiveness": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "character_truthfulness": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "dialogue_separability": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "formal_enactment": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "surplus_life": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "scene_method_freshness": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "humor_signature": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "prose_quality": {{"score": N, "weakest_sentence": "...", "fix": "...", "strongest_sentence": "...", "note": "..."}},
+  "continuity": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "canon_compliance": {{"score": N, "violations": ["..."], "note": "..."}},
+  "lore_integration": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "engagement": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "voice_adherence": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "beat_coverage": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "character_voice": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "plants_seeded": {{"score": N, "weakest_moment": "...", "fix": "...", "note": "..."}},
+  "three_weakest_sentences": ["quote 1", "quote 2", "quote 3"],
+  "three_strongest_sentences": ["quote 1", "quote 2", "quote 3"],
+  "ai_patterns_detected": ["list any AI writing patterns found"],
+  "overall_score": N,
+  "weakest_dimension": "...",
+  "top_3_revisions": ["specific revision 1", "specific revision 2", "specific revision 3"],
+  "new_canon_entries": ["any new facts established in this chapter"]
+  {build_risk_schema(include_risk)}
+}}
+"""
+    chapter_context = f"""CHAPTER PLAN REFERENCE:
+{chapter_reference}
+
+PREVIOUS CHAPTER (tail):
+{prev_chapter_tail}
+
+CHAPTER TO EVALUATE:
+{chapter_text}
+"""
+    return [text_block(shared_context, cache=True), text_block(chapter_context)]
+
+
 FULL_NOVEL_EVIDENCE_PROMPT = """Evaluate this fantasy novel holistically from planning docs plus an evidence pack of real passages.
 
 VOICE:
@@ -952,7 +1091,7 @@ def evaluate_chapter(chapter_num, *, include_risk: bool = False):
     prev_text = load_chapter(chapter_num - 1) if chapter_num > 1 else "(first chapter)"
     prev_tail = prev_text[-3000:] if len(prev_text) > 3000 else prev_text
 
-    prompt = CHAPTER_PROMPT_V2.format(
+    messages = build_chapter_judge_message_content(
         perspective=layers["perspective"][:3000],
         voice=layers["voice"],
         world=layers["world"][:4000],
@@ -963,9 +1102,9 @@ def evaluate_chapter(chapter_num, *, include_risk: bool = False):
         chapter_reference=extract_chapter_reference(chapter_num, layers),
         prev_chapter_tail=prev_tail,
         chapter_text=chapter_text,
-        risk_schema=build_risk_schema(include_risk),
+        include_risk=include_risk,
     )
-    raw = call_judge(prompt, max_tokens=8000)
+    raw = call_judge(max_tokens=8000, messages=[{"role": "user", "content": messages}])
     result = normalize_chapter_result(parse_json_response(raw), include_risk)
 
     # Mechanical slop check -- adjusts score independently of judge

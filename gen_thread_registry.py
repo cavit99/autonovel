@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
     def load_dotenv(*_args, **_kwargs):
         return False
 
-from anthropic_api import message_text_from_response
+from anthropic_api import enable_automatic_prompt_cache, message_text_from_response
 from planning_split import (
     derive_thread_registry_from_outline,
     extract_json_object,
@@ -53,6 +53,7 @@ def call_writer(prompt: str, max_tokens: int = 4000) -> str:
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": prompt}],
     }
+    enable_automatic_prompt_cache(payload)
     resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
     return message_text_from_response(resp, context="gen_thread_registry writer request")
 

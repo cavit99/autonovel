@@ -17,7 +17,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
     def load_dotenv(*_args, **_kwargs):
         return False
 
-from anthropic_api import message_text_from_response
+from anthropic_api import enable_automatic_prompt_cache, message_text_from_response
 from project_paths import readable_planning_artifact_path, require_seed_path
 
 BASE_DIR = Path(__file__).parent
@@ -56,6 +56,7 @@ def call_writer(prompt: str, max_tokens: int = 16000) -> str:
         ),
         "messages": [{"role": "user", "content": prompt}],
     }
+    enable_automatic_prompt_cache(payload)
     resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
     return message_text_from_response(resp, context="gen_world writer request")
 

@@ -25,6 +25,7 @@ from revision_patching import (
     normalize_patch_payload,
     write_patch_file,
 )
+from anthropic_api import enable_automatic_prompt_cache, message_text_from_response
 from roughness_guard import build_guard_report
 
 load_dotenv(BASE_DIR / ".env")
@@ -102,9 +103,9 @@ def call_patch_planner(prompt: str, max_tokens: int = 4000) -> str:
         ),
         "messages": [{"role": "user", "content": prompt}],
     }
+    enable_automatic_prompt_cache(payload)
     resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=600)
-    resp.raise_for_status()
-    return resp.json()["content"][0]["text"]
+    return message_text_from_response(resp, context="patch_revision planner request")
 
 
 def generate_patch_plan(

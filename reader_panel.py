@@ -23,6 +23,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for bare Python test 
     def load_dotenv(*_args, **_kwargs):
         return False
 
+from anthropic_api import message_text_from_response, text_block
 from evidence_tools import BASE_DIR, EDIT_LOG_DIR, load_all_chapters, load_json, render_evidence_pack
 
 load_dotenv(BASE_DIR / ".env")
@@ -31,6 +32,10 @@ JUDGE_MODEL = os.environ.get("AUTONOVEL_JUDGE_MODEL", "claude-opus-4-6")
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 API_BASE = os.environ.get("AUTONOVEL_API_BASE_URL", "https://api.anthropic.com")
 ANTHROPIC_BETA = "context-1m-2025-08-07"
+PANEL_SYSTEM_PROMPT = (
+    "You are part of a multi-reader novel evaluation panel. "
+    "Follow the reading lens in the final user content block. Return valid JSON only."
+)
 
 READERS = {
     "editor": {
@@ -145,26 +150,42 @@ def parse_json_blob(raw: str) -> dict:
     return json.loads(raw, strict=False)
 
 
+def build_reader_message_content(prompt: str, reader_system: str) -> list[dict[str, object]]:
+    return [
+        text_block(prompt, cache=True),
+        text_block(f"READING LENS:\n{reader_system}"),
+    ]
+
+
+def build_reader_payload(reader_key: str, prompt: str) -> dict[str, object]:
+    reader = READERS[reader_key]
+    return {
+        "model": JUDGE_MODEL,
+        "max_tokens": 4000,
+        "temperature": 0.7,
+        "system": PANEL_SYSTEM_PROMPT,
+        "messages": [
+            {
+                "role": "user",
+                "content": build_reader_message_content(prompt, reader["system"]),
+            }
+        ],
+    }
+
+
 def call_reader(reader_key: str, prompt: str) -> dict:
     import httpx
 
-    reader = READERS[reader_key]
     headers = {
         "x-api-key": API_KEY,
         "anthropic-version": "2023-06-01",
         "anthropic-beta": ANTHROPIC_BETA,
         "content-type": "application/json",
     }
-    payload = {
-        "model": JUDGE_MODEL,
-        "max_tokens": 4000,
-        "temperature": 0.7,
-        "system": reader["system"],
-        "messages": [{"role": "user", "content": prompt}],
-    }
+    payload = build_reader_payload(reader_key, prompt)
     response = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
-    response.raise_for_status()
-    return parse_json_blob(response.json()["content"][0]["text"])
+    raw = message_text_from_response(response, context=f"reader_panel request ({reader_key})")
+    return parse_json_blob(raw)
 
 
 def find_disagreements(results: dict) -> list[dict]:

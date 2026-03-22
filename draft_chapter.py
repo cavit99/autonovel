@@ -13,7 +13,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from anthropic_api import message_text_from_response
+from anthropic_api import enable_automatic_prompt_cache, message_text_from_response
 from stateful_drafting import (
     build_legacy_prompt,
     build_new_mode_prompt,
@@ -45,6 +45,7 @@ def call_writer(prompt: str, system_prompt: str, max_tokens: int = 16000) -> str
         "system": system_prompt,
         "messages": [{"role": "user", "content": prompt}],
     }
+    enable_automatic_prompt_cache(payload)
     resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=600)
     return message_text_from_response(resp, context="draft_chapter writer request")
 

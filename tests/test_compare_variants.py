@@ -16,6 +16,31 @@ import compare_variants
 
 
 class CompareVariantsTests(unittest.TestCase):
+    def test_call_judge_uses_automatic_prompt_caching(self):
+        captured = {}
+
+        class FakeResponse:
+            def json(self):
+                return {"content": [{"text": '{"winner":"baseline","decision":"select","reason":"ok"}'}]}
+
+            def raise_for_status(self):
+                return None
+
+        class FakeHttpx:
+            @staticmethod
+            def post(url, headers=None, json=None, timeout=None):
+                captured["url"] = url
+                captured["headers"] = headers
+                captured["json"] = json
+                captured["timeout"] = timeout
+                return FakeResponse()
+
+        with mock.patch.dict("sys.modules", {"httpx": FakeHttpx}):
+            result = compare_variants.call_judge("compare these candidates")
+
+        self.assertEqual(result["winner"], "baseline")
+        self.assertEqual(captured["json"]["cache_control"], {"type": "ephemeral", "ttl": "5m"})
+
     def test_main_uses_deterministic_winner_id_when_winner_path_string_differs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             base_dir = Path(tmpdir)

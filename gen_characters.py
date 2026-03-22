@@ -23,7 +23,7 @@ from foundation_mind import (
     extract_json_object,
     normalize_character_engine,
 )
-from anthropic_api import message_text_from_response
+from anthropic_api import enable_automatic_prompt_cache, message_text_from_response
 from project_paths import (
     ensure_parent_dir,
     planning_artifact_path,
@@ -69,6 +69,7 @@ def call_writer(prompt: str, *, max_tokens: int = 16000, temperature: float = 0.
         "system": system,
         "messages": [{"role": "user", "content": prompt}],
     }
+    enable_automatic_prompt_cache(payload)
     resp = httpx.post(f"{API_BASE}/v1/messages", headers=headers, json=payload, timeout=300)
     return message_text_from_response(resp, context="gen_characters writer request")
 
