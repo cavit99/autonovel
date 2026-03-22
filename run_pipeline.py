@@ -16,15 +16,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import signal
 import shlex
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
 from manifest_tools import MANIFEST_PATH, load_manifest, planned_chapter_count, risk_chapters
+from planning_split import normalize_thread_registry, parse_chapter_cards
 from project_paths import (
     ensure_parent_dir,
     ensure_planning_dir,
@@ -163,6 +168,8 @@ def step(text: str) -> None:
 # ---------------------------------------------------------------------------
 
 STDERR_PREVIEW_CHARS = 1600
+SUBPROCESS_HEARTBEAT_SECONDS = 30.0
+OUTLINE_CHAPTER_HEADING_RE = re.compile(r"^###\s*Ch(?:apter)?\s*(\d+)", re.MULTILINE)
 
 
 def preview_stderr(text: str, limit: int = STDERR_PREVIEW_CHARS) -> str:
@@ -171,52 +178,140 @@ def preview_stderr(text: str, limit: int = STDERR_PREVIEW_CHARS) -> str:
         return text
     return "...<stderr truncated>\n" + text[-limit:]
 
-def run_tool(cmd: str, timeout: int = 600, check: bool = False) -> subprocess.CompletedProcess:
-    step(f"RUN: {cmd}")
+
+def _relay_child_stream(
+    stream, sink, buffer: list[str]
+) -> None:
+    if stream is None:
+        return
     try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
+        for line in iter(stream.readline, ""):
+            buffer.append(line)
+            print(line, end="", file=sink, flush=True)
+    finally:
+        stream.close()
+
+
+def _terminate_process(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except ProcessLookupError:
+        return
+
+
+def _run_subprocess(
+    command: str | list[str],
+    *,
+    display_cmd: str,
+    shell: bool,
+    timeout: int,
+) -> subprocess.CompletedProcess:
+    step(f"RUN: {display_cmd}")
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    started_at = time.monotonic()
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    timed_out = False
+    returncode = -1
+
+    process: subprocess.Popen[str] | None = None
+    stdout_thread: threading.Thread | None = None
+    stderr_thread: threading.Thread | None = None
+    try:
+        process = subprocess.Popen(
+            command,
+            shell=shell,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
+            bufsize=1,
             cwd=str(BASE_DIR),
+            env=env,
+            start_new_session=hasattr(os, "killpg"),
         )
+        stdout_thread = threading.Thread(
+            target=_relay_child_stream,
+            args=(process.stdout, sys.stdout, stdout_chunks),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=_relay_child_stream,
+            args=(process.stderr, sys.stderr, stderr_chunks),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        next_heartbeat = started_at + SUBPROCESS_HEARTBEAT_SECONDS
+        while True:
+            now = time.monotonic()
+            elapsed = now - started_at
+            remaining = timeout - elapsed
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(display_cmd, timeout)
+            if now >= next_heartbeat:
+                step(f"HEARTBEAT: still running after {elapsed:.1f}s: {display_cmd}")
+                next_heartbeat += SUBPROCESS_HEARTBEAT_SECONDS
+                continue
+            wait_timeout = min(remaining, next_heartbeat - now)
+            try:
+                returncode = process.wait(timeout=wait_timeout)
+                break
+            except subprocess.TimeoutExpired:
+                continue
     except subprocess.TimeoutExpired:
+        timed_out = True
         print(f"    ERROR: timed out after {timeout}s")
-        result = subprocess.CompletedProcess(cmd, returncode=-1, stdout="", stderr="TIMEOUT")
+        if process is not None:
+            _terminate_process(process)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+    finally:
+        if process is not None:
+            if stdout_thread is not None:
+                stdout_thread.join()
+            if stderr_thread is not None:
+                stderr_thread.join()
+
+    elapsed = time.monotonic() - started_at
+    stdout_text = "".join(stdout_chunks)
+    stderr_text = "".join(stderr_chunks)
+    if timed_out:
+        if stderr_text and not stderr_text.endswith("\n"):
+            stderr_text += "\n"
+        stderr_text += "TIMEOUT"
+        returncode = -1
+
+    result = subprocess.CompletedProcess(command, returncode=returncode, stdout=stdout_text, stderr=stderr_text)
+    step(f"DONE ({elapsed:.1f}s, exit {result.returncode}): {display_cmd}")
 
     if result.returncode != 0:
         print(f"    WARN: exit code {result.returncode}")
         stderr_text = preview_stderr(result.stderr or "")
         if stderr_text:
             print(f"    stderr: {stderr_text}")
-        if check:
-            raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+    return result
+
+
+def run_tool(cmd: str, timeout: int = 600, check: bool = False) -> subprocess.CompletedProcess:
+    result = _run_subprocess(cmd, display_cmd=cmd, shell=True, timeout=timeout)
+    if result.returncode != 0 and check:
+        raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
     return result
 
 
 def run_tool_args(args: list[str], timeout: int = 600, check: bool = False) -> subprocess.CompletedProcess:
-    step(f"RUN: {shlex.join(args)}")
-    try:
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(BASE_DIR),
-        )
-    except subprocess.TimeoutExpired:
-        print(f"    ERROR: timed out after {timeout}s")
-        result = subprocess.CompletedProcess(args, returncode=-1, stdout="", stderr="TIMEOUT")
-
-    if result.returncode != 0:
-        print(f"    WARN: exit code {result.returncode}")
-        stderr_text = preview_stderr(result.stderr or "")
-        if stderr_text:
-            print(f"    stderr: {stderr_text}")
-        if check:
-            raise subprocess.CalledProcessError(result.returncode, args, result.stdout, result.stderr)
+    result = _run_subprocess(args, display_cmd=shlex.join(args), shell=False, timeout=timeout)
+    if result.returncode != 0 and check:
+        raise subprocess.CalledProcessError(result.returncode, args, result.stdout, result.stderr)
     return result
 
 
@@ -395,6 +490,36 @@ def load_eval_result(stdout: str) -> dict:
     if path and path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
     return {}
+
+
+def summarize_chapter_cards_artifact() -> None:
+    path = planning_artifact_path("chapter_cards", BASE_DIR)
+    try:
+        cards = parse_chapter_cards(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        step(f"Chapter cards summary unavailable: {exc}")
+        return
+    step(f"Chapter cards ready: {len(cards)} chapters parsed")
+
+
+def summarize_thread_registry_artifact() -> None:
+    path = planning_artifact_path("thread_registry", BASE_DIR)
+    try:
+        threads = normalize_thread_registry(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError) as exc:
+        step(f"Thread registry summary unavailable: {exc}")
+        return
+    step(f"Thread registry ready: {len(threads)} threads")
+
+
+def summarize_outline_artifact() -> None:
+    path = planning_artifact_path("outline", BASE_DIR)
+    try:
+        chapter_count = len(OUTLINE_CHAPTER_HEADING_RE.findall(path.read_text(encoding="utf-8")))
+    except OSError as exc:
+        step(f"Legacy outline summary unavailable: {exc}")
+        return
+    step(f"Legacy outline ready: {chapter_count} chapters")
 
 
 def count_words_in_chapters() -> int:
@@ -671,12 +796,15 @@ def run_foundation(state: dict) -> dict:
 
         step("Generating chapter cards...")
         require_success(uv_run("gen_chapter_cards.py", timeout=300), "gen_chapter_cards.py")
+        summarize_chapter_cards_artifact()
 
         step("Generating thread registry...")
         require_success(uv_run("gen_thread_registry.py", timeout=300), "gen_thread_registry.py")
+        summarize_thread_registry_artifact()
 
         step("Refreshing legacy outline compatibility artifact...")
         require_success(uv_run("gen_outline_part2.py", timeout=300), "gen_outline_part2.py")
+        summarize_outline_artifact()
 
         step("Generating canon...")
         require_success(
