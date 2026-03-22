@@ -158,7 +158,7 @@ def local_thread_window(threads: list[dict[str, object]], chapter_num: int, limi
         first_seen = ensure_int(thread.get("first_seen") or thread.get("planted"), default=0)
         payoff = ensure_int(thread.get("payoff"), default=0)
         required = bool(thread.get("required"))
-        if first_seen and first_seen > chapter_num + 1:
+        if first_seen and first_seen > chapter_num:
             continue
         if payoff and payoff < max(1, chapter_num - 1) and not required:
             continue

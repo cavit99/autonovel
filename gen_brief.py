@@ -445,6 +445,7 @@ def build_eval_brief(ch: int) -> str:
     problem_parts: list[str] = []
     keep_parts: list[str] = []
     change_parts: list[str] = []
+    patch_directives: list[str] = []
     change_num = 1
     patch_directives: list[str] = []
 
@@ -723,6 +724,7 @@ def build_auto_brief() -> tuple[int, str]:
     problem_parts: list[str] = []
     keep_parts: list[str] = []
     change_parts: list[str] = []
+    patch_directives: list[str] = []
     change_num = 1
 
     # Full eval context

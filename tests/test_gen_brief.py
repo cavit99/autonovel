@@ -1,6 +1,9 @@
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from gen_brief import (
+    build_auto_brief,
     append_patch_directives_section,
     build_patch_directives_from_cuts,
     has_patch_directives,
@@ -67,6 +70,39 @@ class GenBriefPatchDirectiveTests(unittest.TestCase):
         brief = "# Revision Brief\n"
         self.assertEqual(append_patch_directives_section(brief, []), brief)
         self.assertFalse(has_patch_directives(brief))
+
+    def test_build_auto_brief_handles_missing_cuts_data(self):
+        full_eval = {
+            "weakest_chapter": 3,
+            "weakest_dimension": "overall_engagement",
+            "top_suggestion": "Tighten the confrontation.",
+            "novel_score": 6.8,
+        }
+        chapter_eval = {
+            "overall_score": 6.1,
+            "engagement": {"score": 6, "fix": "Sharpen the scene pressure."},
+            "top_3_revisions": [],
+            "ai_patterns_detected": [],
+            "three_strongest_sentences": [],
+            "three_weakest_sentences": [],
+        }
+        with (
+            patch("gen_brief.latest_full_eval", return_value=Path("eval_logs/fake_full.json")),
+            patch("gen_brief.load_json", side_effect=[full_eval, chapter_eval]),
+            patch("gen_brief.chapter_text", return_value="# Chapter 3\n\nCass waits."),
+            patch("gen_brief.chapter_title", return_value="Signals"),
+            patch("gen_brief.word_count", return_value=2),
+            patch("gen_brief.extract_voice_rules", return_value=["Keep the pressure local."]),
+            patch("gen_brief.latest_chapter_eval", return_value=Path("eval_logs/fake_ch03.json")),
+            patch("gen_brief.load_panel", return_value={}),
+            patch("gen_brief.load_cuts", return_value={}),
+        ):
+            chapter, brief = build_auto_brief()
+
+        self.assertEqual(chapter, 3)
+        self.assertIn("# Revision Brief: Chapter 3", brief)
+        self.assertNotIn("## Patch Directives", brief)
+        self.assertIn("[PRIORITY — full eval] Tighten the confrontation.", brief)
 
 
 if __name__ == "__main__":

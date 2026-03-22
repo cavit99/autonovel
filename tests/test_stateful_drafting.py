@@ -262,6 +262,16 @@ The narration revises itself when it gets too sure.
         )
         self.assertEqual(window[0]["id"], "pressure")
 
+    def test_local_thread_window_excludes_future_threads(self):
+        window = local_thread_window(
+            [
+                {"id": "current", "description": "Current thread", "type": "plot", "first_seen": 2, "payoff": 0, "required": True},
+                {"id": "future", "description": "Future thread", "type": "plot", "first_seen": 3, "payoff": 0, "required": True},
+            ],
+            2,
+        )
+        self.assertEqual([thread["id"] for thread in window], ["current"])
+
 
 if __name__ == "__main__":
     unittest.main()
